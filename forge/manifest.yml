@@ -5,6 +5,7 @@ modules:
       resolver:
         function: resolver
       title: Timelogger
+      icon: resource:main;icons/timelogger.svg
   function:
     - key: resolver
       handler: src/index.handler
@@ -12,7 +13,7 @@ resources:
   - key: main
     path: static/dist
 app:
-  id: ari:cloud:ecosystem::app/00000000-0000-0000-0000-000000000000
+  id: ari:cloud:ecosystem::app/17f7dd95-08b9-4a28-9800-55c4f2ec402c
   runtime:
     name: nodejs24.x
 permissions:
