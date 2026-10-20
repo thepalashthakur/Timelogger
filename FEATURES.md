@@ -1,6 +1,6 @@
 # Feature roadmap
 
-Status reflects code in this repository. Live Supabase and Vercel setup is pending project credentials.
+Status reflects code in this repository. The web app and Jira Forge app are deployed separately.
 
 ## v0 — initial release
 
@@ -22,8 +22,19 @@ Status reflects code in this repository. Live Supabase and Vercel setup is pendi
 | Create and revoke personal API tokens in settings | Implemented |
 | One-time token display, 90-day expiry, hashed storage | Implemented |
 | Use a personal token with timer and entry APIs | Implemented |
-| Native Jira issue panel and account linking | Implemented in Forge source; installation pending |
-| Start, pause, resume, and stop Timelogger timer from a Jira issue | Implemented in Forge source; installation pending |
+| Native Jira issue panel and account linking | Implemented |
+| Start, pause, resume, and stop Timelogger timer from a Jira issue | Implemented |
+
+## v0.2 — navigation and time entry discovery
+
+| Feature | Status |
+| --- | --- |
+| Dedicated Timer, Time entries, and Settings views with URL hash navigation | Implemented |
+| Responsive entry table and mobile list | Implemented |
+| Search across project, task, and description | Implemented |
+| Filter by project, status, and start date range | Implemented |
+| Server-side pagination and result count across full entry history | Implemented |
+| Manual entry flow opens the entries view after saving | Implemented |
 
 ## v1 — custom time entry properties
 

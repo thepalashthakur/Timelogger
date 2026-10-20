@@ -25,7 +25,7 @@ data is restricted to that user. Personal tokens cannot create or revoke tokens.
 | `GET` | `/api/timer` | Current running or paused entry, if any |
 | `POST` | `/api/timer` | `{ "action": "start", "project": "Website", "task": "Design", "description": "Header" }` |
 | `POST` | `/api/timer` | `{ "action": "pause" }`, `{ "action": "resume" }`, or `{ "action": "stop" }` |
-| `GET` | `/api/entries` | 100 most recent entries |
+| `GET` | `/api/entries` | Paginated entries; defaults to the 100 most recent |
 | `POST` | `/api/entries` | `{ "project": "Website", "task": "Review", "description": "QA", "start_at": "2026-10-20T09:00:00Z", "end_at": "2026-10-20T10:00:00Z" }` |
 
 Token management requires a Supabase login session. `GET /api/tokens` lists token
@@ -33,6 +33,13 @@ metadata, `POST /api/tokens` with `{ "name": "Jira" }` creates a token, and
 `DELETE /api/tokens/{id}` revokes one. The plaintext token is returned only at
 creation, expires after 90 days, and can be revoked immediately. Store it in
 the Jira app's encrypted secret storage; do not put it in Jira frontend code.
+
+The web app's **Time entries** view searches the full history. `GET /api/entries`
+accepts optional `page` (starting at 1), `page_size` (1–100), `q` (case-insensitive
+search across project, task, and description), `project`, `status`, `from`, and
+`to`. `from` is inclusive and `to` is exclusive for the entry start time. The
+response includes `entries`, `count`, `page`, and `page_size`. The API requires
+the same bearer authentication as before.
 
 For example:
 
