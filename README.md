@@ -28,8 +28,8 @@ data is restricted to that user. Personal tokens cannot create or revoke tokens.
 | `GET` | `/api/entries` | Paginated entries; defaults to the 100 most recent |
 | `POST` | `/api/entries` | `{ "project": "Website", "task": "Review", "description": "QA", "start_at": "2026-10-20T09:00:00Z", "end_at": "2026-10-20T10:00:00Z" }` |
 | `GET` | `/api/entries/{id}` | One entry owned by the authenticated user |
-| `PATCH` | `/api/entries/{id}` | Update project, task, description, start, or end on a completed entry; changed times recalculate duration |
-| `DELETE` | `/api/entries/{id}` | Delete a completed entry |
+| `PATCH` | `/api/entries/{id}` | Update project, task, or description on any entry; completed entries also support start/end changes that recalculate duration |
+| `DELETE` | `/api/entries/{id}` | Delete an entry; deleting a running or paused entry removes its active timer |
 | `GET` | `/api/timeline?from=<ISO>&to=<ISO>` | Entries overlapping a period of up to 32 days; returns `entries`, `count`, and `truncated` (500 entry limit) |
 
 Token management requires a Supabase login session. `GET /api/tokens` lists token

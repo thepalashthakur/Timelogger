@@ -62,7 +62,11 @@ The Next.js TypeScript project now checks only web app source and generated Next
 | Delete completed entries with confirmation | Implemented |
 | Authenticated, user-scoped update and delete API | Implemented |
 
-Running and paused timers remain under the timer actions. Stop a timer before editing or deleting its entry. Changing a completed entry's time range recalculates its tracked duration; changing only its text keeps the stored duration. No database migration is required.
+Changing a completed entry's time range recalculates its tracked duration; changing only its text keeps the stored duration. No database migration is required.
+
+### v0.4.1 — entry action visibility
+
+Edit and Delete are visible beside each entry in the web list and in timeline entry details. Running and paused entries support metadata edits; their start and end times stay under timer controls. Deleting an active entry removes its timer after confirmation.
 
 ## v1 — custom time entry properties
 
