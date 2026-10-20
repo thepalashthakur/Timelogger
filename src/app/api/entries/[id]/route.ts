@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { adminClient } from '@/lib/admin';
 import { authenticated, badRequest, details, unauthorized } from '@/lib/api';
 import type { TimeEntry } from '@/lib/supabase';
+import { resolveSelection, setEntryTags, validateTagIds } from '@/lib/catalog';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,12 +36,20 @@ export async function PATCH(req: NextRequest, { params }: Context) {
   if (readError) return NextResponse.json({ error: readError.message }, { status: 500 });
   if (!existing) return notFound();
 
-  const fields = details({
+  let fields = details({
     project: body.project ?? existing.project,
     task: body.task ?? existing.task,
     description: body.description ?? existing.description,
   });
   if (!fields) return badRequest('Invalid entry details');
+  let tagIds: string[] | null = null;
+  try {
+    if (body.project_id !== undefined || body.task_id !== undefined) {
+      const selection = await resolveSelection(auth.userId, body.project_id, body.task_id);
+      fields = { ...fields, project: selection.project?.key ?? '', task: selection.task?.key ?? '' };
+    }
+    if (body.tag_ids !== undefined) tagIds = await validateTagIds(auth.userId, body.tag_ids);
+  } catch (caught) { return badRequest(caught instanceof Error ? caught.message : 'Invalid categories'); }
   if ((body.start_at !== undefined && typeof body.start_at !== 'string') || (body.end_at !== undefined && typeof body.end_at !== 'string')) {
     return badRequest('Start and end must be dates');
   }
@@ -66,6 +75,7 @@ export async function PATCH(req: NextRequest, { params }: Context) {
   const { data, error } = await query
     .select('*').maybeSingle();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (data && tagIds) await setEntryTags(auth.userId, id, tagIds);
   return data
     ? NextResponse.json({ entry: data as TimeEntry })
     : NextResponse.json({ error: 'Entry changed. Refresh and try again' }, { status: 409 });
