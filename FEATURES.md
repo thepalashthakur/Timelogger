@@ -72,6 +72,21 @@ Edit and Delete are visible beside each entry in the web list and in timeline en
 
 The dashboard timeline has a date picker, zoom in and zoom out controls, and an Expand action that shows the full day height without the timeline's usual scroll limit.
 
+## v0.5 — projects, tasks, and tags
+
+| Feature | Status |
+| --- | --- |
+| Managed projects with stable keys, names, colors, and archive/restore | Implemented |
+| Tasks scoped to one project, with stable keys and archive/restore | Implemented |
+| Reusable tags with names and colors, assignable to multiple time entries | Implemented |
+| Create categories from the dashboard or entry forms and manage them in a dedicated view | Implemented |
+| Filter entry history by task and tag | Implemented |
+| Jira issue key and project key automatically create matching catalog items on timer start | Implemented |
+| Choose Timelogger tags when starting an issue timer in Forge | Implemented |
+| Additive `timelogger_` catalog migration without changing existing tables or data | Implemented in `supabase/catalog.sql`; deployment requires applying it |
+
+Project and task keys are immutable so existing time entries and Jira issue links remain stable when display names change. Existing freeform project and task values remain readable; they are not rewritten by the migration. Jira keys remain the stored project and task values for Jira-created entries.
+
 ## v1 — custom time entry properties
 
 | Feature | Status |
@@ -83,4 +98,4 @@ The dashboard timeline has a date picker, zoom in and zoom out controls, and an 
 
 ## Later Toggl style features
 
-Projects and tasks as managed records, tags, reports, team workspaces, billable rates, exports, and integrations are future candidates. Scope and order will be decided after v1.
+Reports, team workspaces, billable rates, exports, and additional integrations are future candidates. Scope and order will be decided after v1.

@@ -4,7 +4,7 @@ A Vercel ready Next.js time tracker using Supabase Auth, Supabase Postgres, and 
 
 ## Setup
 
-1. In your existing Supabase project, review and run `supabase/schema.sql`, then `supabase/api_tokens.sql`, in its SQL editor. Each creates only `timelogger_` objects in a transaction. A name collision aborts that migration without changing existing tables or data.
+1. In your existing Supabase project, review and run `supabase/schema.sql`, then `supabase/api_tokens.sql`, then `supabase/catalog.sql` in its SQL editor. Each creates only `timelogger_` objects in a transaction. A name collision aborts that migration without changing existing tables or data. For an existing Timelogger installation, run only `supabase/catalog.sql` before deploying v0.5.
 2. Copy `.env.example` to `.env.local` and set `SUPABASE_URL` and `SUPABASE_ANON_KEY` to the project URL and publishable/anon key. Set `SUPABASE_SERVICE_ROLE_KEY` for the server-only personal token routes. The service role key must never be exposed to the browser or Jira app.
 3. Enable email/password authentication in Supabase. Configure the site URL for localhost and your Vercel domain; choose your email confirmation setting.
 4. Run `npm install` and `npm run dev`.
@@ -31,6 +31,12 @@ data is restricted to that user. Personal tokens cannot create or revoke tokens.
 | `PATCH` | `/api/entries/{id}` | Update project, task, or description on any entry; completed entries also support start/end changes that recalculate duration |
 | `DELETE` | `/api/entries/{id}` | Delete an entry; deleting a running or paused entry removes its active timer |
 | `GET` | `/api/timeline?from=<ISO>&to=<ISO>` | Entries overlapping a period of up to 32 days; returns `entries`, `count`, and `truncated` (500 entry limit) |
+| `GET` | `/api/catalog` | Managed projects, tasks, and tags for the authenticated user |
+| `POST` | `/api/catalog` | Create `{ "kind": "project" | "task" | "tag", "name": "...", ... }` |
+| `PATCH` | `/api/catalog/{projects|tasks|tags}/{id}` | Rename or change color; archive/restore projects and tasks |
+| `DELETE` | `/api/catalog/{projects|tasks|tags}/{id}` | Archive a project/task or permanently delete a tag |
+| `GET` | `/api/entry-tags?ids=<comma-separated-entry-ids>` | Tag IDs assigned to the requested entries |
+| `PUT` | `/api/entry-tags` | Replace an entry's tags with `{ "entry_id": "...", "tag_ids": ["..."] }` |
 
 Token management requires a Supabase login session. `GET /api/tokens` lists token
 metadata, `POST /api/tokens` with `{ "name": "Jira" }` creates a token, and
@@ -40,7 +46,7 @@ the Jira app's encrypted secret storage; do not put it in Jira frontend code.
 
 The web app's **Time entries** view searches the full history. `GET /api/entries`
 accepts optional `page` (starting at 1), `page_size` (1–100), `q` (case-insensitive
-search across project, task, and description), `project`, `status`, `from`, and
+search across project, task, and description), `project`, `task`, `tag_id`, `status`, `from`, and
 `to`. `from` is inclusive and `to` is exclusive for the entry start time. The
 response includes `entries`, `count`, `page`, and `page_size`. The API requires
 the same bearer authentication as before.
