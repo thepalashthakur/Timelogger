@@ -68,6 +68,14 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   const timelineScrollRef = useRef<HTMLDivElement>(null);
   const [selectedTimelineEntry, setSelectedTimelineEntry] = useState<TimeEntry | null>(null);
   const [manualDialogOpen, setManualDialogOpen] = useState(false);
+  const [editingEntry, setEditingEntry] = useState<TimeEntry | null>(null);
+  const [deletingEntry, setDeletingEntry] = useState<TimeEntry | null>(null);
+  const [editProject, setEditProject] = useState('');
+  const [editTask, setEditTask] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editStart, setEditStart] = useState('');
+  const [editEnd, setEditEnd] = useState('');
+  const [entryDialogError, setEntryDialogError] = useState('');
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [entryCount, setEntryCount] = useState(0);
   const [entriesLoading, setEntriesLoading] = useState(false);
@@ -296,6 +304,52 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     finally { setBusy(false); }
   }
 
+  function openEdit(item: TimeEntry) {
+    if (item.status !== 'stopped' || !item.end_at) return;
+    setSelectedTimelineEntry(null);
+    setEntryDialogError('');
+    setEditProject(item.project);
+    setEditTask(item.task);
+    setEditDescription(item.description);
+    setEditStart(dateTimeLocal(new Date(item.start_at)));
+    setEditEnd(dateTimeLocal(new Date(item.end_at)));
+    setEditingEntry(item);
+  }
+
+  async function updateEntry(event: React.FormEvent) {
+    event.preventDefault();
+    if (!editingEntry) return;
+    setBusy(true); setEntryDialogError(''); setNotice('');
+    try {
+      const startChanged = editStart !== dateTimeLocal(new Date(editingEntry.start_at));
+      const endChanged = editEnd !== dateTimeLocal(new Date(editingEntry.end_at!));
+      await request(`/api/entries/${editingEntry.id}`, { method: 'PATCH', body: JSON.stringify({
+        project: editProject, task: editTask, description: editDescription,
+        ...(startChanged ? { start_at: new Date(editStart).toISOString() } : {}),
+        ...(endChanged ? { end_at: new Date(editEnd).toISOString() } : {}),
+      }) });
+      setEditingEntry(null);
+      setNotice('Time entry updated');
+      await Promise.all([loadEntries(), loadTimeline()]);
+    } catch (caught) { setEntryDialogError(caught instanceof Error ? caught.message : 'Could not update entry'); }
+    finally { setBusy(false); }
+  }
+
+  async function deleteEntry() {
+    if (!deletingEntry) return;
+    setBusy(true); setEntryDialogError(''); setNotice('');
+    try {
+      await request(`/api/entries/${deletingEntry.id}`, { method: 'DELETE' });
+      setDeletingEntry(null);
+      setSelectedTimelineEntry(null);
+      setNotice('Time entry deleted');
+      if (page > 1 && entries.length === 1) setPage(page - 1);
+      else await loadEntries();
+      await loadTimeline();
+    } catch (caught) { setEntryDialogError(caught instanceof Error ? caught.message : 'Could not delete entry'); }
+    finally { setBusy(false); }
+  }
+
   if (!ready) return <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><CircularProgress aria-label="Loading Timelogger" /></Box>;
 
   if (!session) return <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center', bgcolor: 'grey.50', p: 2 }}>
@@ -373,7 +427,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
         </Stack></Paper>
       </Stack></Box>}
       {view === 'entries' && <Box role="tabpanel" id="panel-entries" aria-labelledby="tab-entries"><Stack spacing={3}>
-        <Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Time entries</Typography><Typography color="text.secondary">Search across projects, tasks, and descriptions. Use filters to narrow the results.</Typography></Box>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}><Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Time entries</Typography><Typography color="text.secondary">Search, edit, and manage your completed entries.</Typography></Box><Button variant="contained" onClick={() => setManualDialogOpen(true)}>Add entry</Button></Stack>
         <Paper variant="outlined" sx={{ borderRadius: 3, p: { xs: 2, sm: 3 } }}><Stack spacing={2}>
           <Grid container spacing={2}>
             <Grid size={{ xs: 12, md: 6 }}><TextField label="Search entries" placeholder="Project, task, or description" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 100 } }} /></Grid>
@@ -391,10 +445,10 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
           {entriesLoading && <Box sx={{ display: 'grid', placeItems: 'center', py: 6 }}><CircularProgress aria-label="Loading entries" /></Box>}
           {!entriesLoading && !entriesError && entries.length === 0 && <Box sx={{ p: 4, textAlign: 'center' }}><Typography variant="h6">No entries found</Typography><Typography color="text.secondary">{search || projectFilter || statusFilter !== 'all' || fromDate || toDate ? 'Try another search or clear the filters.' : 'Start a timer or add time manually to see it here.'}</Typography>{!search && !projectFilter && statusFilter === 'all' && !fromDate && !toDate && <Button sx={{ mt: 2 }} onClick={() => navigate('dashboard')}>Go to dashboard</Button>}</Box>}
           {!entriesLoading && !entriesError && entries.length > 0 && <>
-            <TableContainer sx={{ display: { xs: 'none', md: 'block' } }}><Table aria-label="Time entries"><TableHead><TableRow><TableCell>Work</TableCell><TableCell>Project</TableCell><TableCell>Started</TableCell><TableCell>Status</TableCell><TableCell align="right">Duration</TableCell></TableRow></TableHead><TableBody>
-              {entries.map((item) => <TableRow key={item.id} hover><TableCell><Typography sx={{ fontWeight: 600 }}>{item.task || 'Untitled work'}</Typography>{item.description && <Typography variant="body2" color="text.secondary">{item.description}</Typography>}</TableCell><TableCell>{item.project || '—'}</TableCell><TableCell>{new Date(item.start_at).toLocaleString()}</TableCell><TableCell><Chip size="small" label={item.status} color={item.status === 'running' ? 'success' : item.status === 'paused' ? 'warning' : 'default'} /></TableCell><TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{duration(currentDuration(item, now))}</TableCell></TableRow>)}
+            <TableContainer sx={{ display: { xs: 'none', md: 'block' } }}><Table aria-label="Time entries"><TableHead><TableRow><TableCell>Work</TableCell><TableCell>Project</TableCell><TableCell>Started</TableCell><TableCell>Status</TableCell><TableCell align="right">Duration</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead><TableBody>
+              {entries.map((item) => <TableRow key={item.id} hover><TableCell><Typography sx={{ fontWeight: 600 }}>{item.task || 'Untitled work'}</Typography>{item.description && <Typography variant="body2" color="text.secondary">{item.description}</Typography>}</TableCell><TableCell>{item.project || '—'}</TableCell><TableCell>{new Date(item.start_at).toLocaleString()}</TableCell><TableCell><Chip size="small" label={item.status} color={item.status === 'running' ? 'success' : item.status === 'paused' ? 'warning' : 'default'} /></TableCell><TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{duration(currentDuration(item, now))}</TableCell><TableCell align="right">{item.status === 'stopped' && <Stack direction="row" spacing={0.5} sx={{ justifyContent: 'flex-end' }}><Button size="small" onClick={() => openEdit(item)} aria-label={`Edit ${item.task || 'time entry'}`}>Edit</Button><Button size="small" color="error" onClick={() => { setEntryDialogError(''); setDeletingEntry(item); }} aria-label={`Delete ${item.task || 'time entry'}`}>Delete</Button></Stack>}</TableCell></TableRow>)}
             </TableBody></Table></TableContainer>
-            <Stack divider={<Divider />} sx={{ display: { xs: 'flex', md: 'none' } }}>{entries.map((item) => <Box key={item.id} sx={{ p: 2 }}><Stack direction="row" spacing={2} sx={{ justifyContent: 'space-between', alignItems: 'flex-start' }}><Box><Typography sx={{ fontWeight: 600 }}>{item.task || 'Untitled work'}</Typography><Typography variant="body2" color="text.secondary">{item.project || 'No project'} · {new Date(item.start_at).toLocaleString()}</Typography>{item.description && <Typography variant="body2" color="text.secondary">{item.description}</Typography>}</Box><Typography sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, whiteSpace: 'nowrap' }}>{duration(currentDuration(item, now))}</Typography></Stack><Chip size="small" label={item.status} color={item.status === 'running' ? 'success' : item.status === 'paused' ? 'warning' : 'default'} sx={{ mt: 1 }} /></Box>)}</Stack>
+            <Stack divider={<Divider />} sx={{ display: { xs: 'flex', md: 'none' } }}>{entries.map((item) => <Box key={item.id} sx={{ p: 2 }}><Stack direction="row" spacing={2} sx={{ justifyContent: 'space-between', alignItems: 'flex-start' }}><Box><Typography sx={{ fontWeight: 600 }}>{item.task || 'Untitled work'}</Typography><Typography variant="body2" color="text.secondary">{item.project || 'No project'} · {new Date(item.start_at).toLocaleString()}</Typography>{item.description && <Typography variant="body2" color="text.secondary">{item.description}</Typography>}</Box><Typography sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, whiteSpace: 'nowrap' }}>{duration(currentDuration(item, now))}</Typography></Stack><Chip size="small" label={item.status} color={item.status === 'running' ? 'success' : item.status === 'paused' ? 'warning' : 'default'} sx={{ mt: 1 }} />{item.status === 'stopped' && <Stack direction="row" spacing={1} sx={{ mt: 1 }}><Button size="small" onClick={() => openEdit(item)}>Edit</Button><Button size="small" color="error" onClick={() => { setEntryDialogError(''); setDeletingEntry(item); }}>Delete</Button></Stack>}</Box>)}</Stack>
           </>}
           {!entriesLoading && !entriesError && entryCount > pageSize && <Box sx={{ p: 2, display: 'flex', justifyContent: 'center' }}><Pagination count={Math.ceil(entryCount / pageSize)} page={page} onChange={(_event, next) => setPage(next)} showFirstButton showLastButton color="primary" aria-label="Time entry pages" /></Box>}
         </Stack></Paper>
@@ -432,6 +486,16 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
       <Typography>Project: {selectedTimelineEntry?.project || 'No project'}</Typography>
       {selectedTimelineEntry?.description && <Typography color="text.secondary">{selectedTimelineEntry.description}</Typography>}
       {selectedTimelineEntry && <><Typography>Started: {new Date(selectedTimelineEntry.start_at).toLocaleString()}</Typography><Typography>{selectedTimelineEntry.end_at ? `Ended: ${new Date(selectedTimelineEntry.end_at).toLocaleString()}` : `Status: ${selectedTimelineEntry.status}`}</Typography><Typography sx={{ fontVariantNumeric: 'tabular-nums' }}>Tracked: {duration(currentDuration(selectedTimelineEntry, now))}</Typography></>}
-    </Stack></DialogContent><DialogActions><Button onClick={() => setSelectedTimelineEntry(null)}>Close</Button></DialogActions></Dialog>
+    </Stack></DialogContent><DialogActions>{selectedTimelineEntry?.status === 'stopped' && <><Button onClick={() => openEdit(selectedTimelineEntry)}>Edit</Button><Button color="error" onClick={() => { setEntryDialogError(''); setDeletingEntry(selectedTimelineEntry); setSelectedTimelineEntry(null); }}>Delete</Button></>}<Button onClick={() => setSelectedTimelineEntry(null)}>Close</Button></DialogActions></Dialog>
+    <Dialog open={!!editingEntry} onClose={() => { if (!busy) setEditingEntry(null); }} fullWidth maxWidth="sm"><Box component="form" onSubmit={updateEntry}><DialogTitle>Edit time entry</DialogTitle><DialogContent><Stack spacing={2} sx={{ pt: 1 }}>
+      <TextField label="Project" value={editProject} onChange={(e) => setEditProject(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} />
+      <TextField label="Task" value={editTask} onChange={(e) => setEditTask(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} />
+      <TextField label="Description" value={editDescription} onChange={(e) => setEditDescription(e.target.value)} fullWidth multiline minRows={2} slotProps={{ htmlInput: { maxLength: 500 } }} />
+      <TextField label="Start" type="datetime-local" value={editStart} onChange={(e) => setEditStart(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} required fullWidth />
+      <TextField label="End" type="datetime-local" value={editEnd} onChange={(e) => setEditEnd(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} required fullWidth />
+      <Typography variant="body2" color="text.secondary">Changing start or end time recalculates tracked duration from the new time range.</Typography>
+      {entryDialogError && <Alert severity="error">{entryDialogError}</Alert>}
+    </Stack></DialogContent><DialogActions><Button onClick={() => setEditingEntry(null)} disabled={busy}>Cancel</Button><Button type="submit" variant="contained" disabled={busy}>Save changes</Button></DialogActions></Box></Dialog>
+    <Dialog open={!!deletingEntry} onClose={() => { if (!busy) setDeletingEntry(null); }} fullWidth maxWidth="xs"><DialogTitle>Delete time entry?</DialogTitle><DialogContent><Typography>Delete “{deletingEntry?.task || deletingEntry?.description || 'Untitled work'}”? This cannot be undone.</Typography>{entryDialogError && <Alert severity="error" sx={{ mt: 2 }}>{entryDialogError}</Alert>}</DialogContent><DialogActions><Button onClick={() => setDeletingEntry(null)} disabled={busy}>Cancel</Button><Button variant="contained" color="error" onClick={() => void deleteEntry()} disabled={busy}>Delete entry</Button></DialogActions></Dialog>
   </Box>;
 }
