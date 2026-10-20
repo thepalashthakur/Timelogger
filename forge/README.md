@@ -10,7 +10,7 @@ Starting a timer uses the Jira issue key as `task` and the key prefix as `projec
 - Node.js. The [Forge CLI](https://developer.atlassian.com/platform/forge/getting-started/) is installed locally by `npm install`.
 - A Jira Cloud site where you can install Forge apps.
 
-## Register and install
+## Deploy an update to the existing Jira installation
 
 From this `forge` directory:
 
@@ -19,13 +19,13 @@ npm install
 npm --prefix static install
 npm run build
 npx forge login
-npx forge register
-npx forge variables set TIMELOGGER_API_ORIGIN https://timelogger-gilt.vercel.app
-npx forge deploy
-npx forge install --site projects-1.atlassian.net --product Jira
+npx forge lint
+npx forge deploy --environment development
 ```
 
-The manifest allows outbound requests to the deployed Timelogger origin. The runtime variable tells the resolver where to send them. `forge register` replaces the placeholder `app.id` in `manifest.yml`. The Jira site administrator must approve the requested storage and outbound fetch permissions. After changing the origin, update both the manifest and runtime variable, then redeploy; reinstall or upgrade the app if Forge asks for permission approval.
+The app ID in `manifest.yml` is already registered, so do not run `forge register` for this installation. If Forge requests a permission upgrade, run `npx forge install --upgrade --site projects-1.atlassian.net --product Jira --environment development` and approve it as a Jira site administrator. A first installation on another Jira site uses `npx forge install --site <site>.atlassian.net --product Jira --environment development` after deployment.
+
+The manifest allows outbound requests to the deployed Timelogger origin. The `TIMELOGGER_API_ORIGIN` runtime variable tells the resolver where to send them. For a new Forge environment, set it before deploying: `npx forge variables set --environment development TIMELOGGER_API_ORIGIN https://timelogger-gilt.vercel.app`. After changing the origin, update both the manifest and runtime variable, then redeploy. Forge variables are scoped to their environment and take effect after deployment.
 
 The `FORGE_TOKEN` value in the repository's `.env` is an Atlassian CLI token. The CLI does not automatically load `.env`; run `npx forge login` and enter your Atlassian email and token, or export them as `FORGE_EMAIL` and `FORGE_API_TOKEN` before running commands. The Timelogger personal token is a separate token created in Timelogger Settings and pasted into the Jira issue panel.
 

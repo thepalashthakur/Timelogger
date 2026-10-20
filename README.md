@@ -2,13 +2,43 @@
 
 A Vercel ready Next.js time tracker using Supabase Auth, Supabase Postgres, and Material UI.
 
-## Setup
+## Deploy the web app
 
-1. In your existing Supabase project, review and run `supabase/schema.sql`, then `supabase/api_tokens.sql`, then `supabase/catalog.sql` in its SQL editor. Each creates only `timelogger_` objects in a transaction. A name collision aborts that migration without changing existing tables or data. For an existing Timelogger installation, run only `supabase/catalog.sql` before deploying v0.5.
-2. Copy `.env.example` to `.env.local` and set `SUPABASE_URL` and `SUPABASE_ANON_KEY` to the project URL and publishable/anon key. Set `SUPABASE_SERVICE_ROLE_KEY` for the server-only personal token routes. The service role key must never be exposed to the browser or Jira app.
-3. Enable email/password authentication in Supabase. Configure the site URL for localhost and your Vercel domain; choose your email confirmation setting.
-4. Run `npm install` and `npm run dev`.
-5. Add the same two environment variables in your Vercel project and deploy.
+These steps use the existing Supabase project and the Vercel project connected to this repository. The Jira issue panel is a separate Forge deployment described below.
+
+1. **Apply the database migrations.** In the Supabase SQL Editor, review and run `supabase/schema.sql`, then `supabase/api_tokens.sql`, then `supabase/catalog.sql` for a new Timelogger installation. For an installation already using the earlier Timelogger tables, apply only migrations that have not yet been run; v0.5 needs `supabase/catalog.sql`. The migrations create only `timelogger_` objects and do not alter existing tables or data. Do not rerun a migration that has already been applied. If you have already applied `supabase/catalog.sql`, skip this step.
+2. **Configure Supabase Auth.** Enable email/password sign-in. Set the Auth site URL to your deployed web app URL (currently `https://timelogger-gilt.vercel.app`). If you use email confirmations, configure the allowed redirect URLs for the deployed domain and `http://localhost:3000` for local development.
+3. **Set the Vercel environment variables.** In the Timelogger project's Vercel settings, add `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` to the Production environment. Use the Supabase project URL, its anon/publishable key, and its service role key respectively. The service role key is required for personal API tokens and stays server-side; never put it in browser code or Forge. Add the same values to Preview only if you deploy previews. Redeploy after changing environment variables.
+4. **Check the app locally.** From the repository root, copy `.env.example` to `.env.local`, fill in the three values, then run:
+
+   ```sh
+   npm install
+   npm run build
+   npm run dev
+   ```
+
+   Open `http://localhost:3000` and sign in.
+5. **Release to Vercel.** Push the commit to the Git branch connected to Vercel production (`main` for this project): `git push origin main`. Vercel builds and deploys that commit automatically. In Vercel **Deployments**, wait for the production deployment to show **Ready** and check that its commit matches the one you pushed. Open `https://timelogger-gilt.vercel.app`, sign in, and verify a timer and a time entry. For v0.5, open **Projects & tags** and verify that its catalog loads. Use **Import existing entries** there if you want to populate managed projects and tasks from older entries.
+
+For local development, `.env.local` is ignored by Git. Do not commit keys or personal API tokens. A successful Vercel deployment does not update the Jira app; deploy Forge separately.
+
+## Deploy the Jira issue panel
+
+The Forge app is already registered in `forge/manifest.yml` and installed on `projects-1.atlassian.net`. For an update, run these commands from the repository root after the web app is live:
+
+```sh
+cd forge
+npm install
+npm --prefix static install
+npm run build
+npx forge login
+npx forge lint
+npx forge deploy --environment development
+```
+
+`forge login` asks for the Atlassian account email and its Forge CLI API token. The repository's `.env` is not loaded automatically by Forge. Use `npx forge install --upgrade --site projects-1.atlassian.net --product Jira --environment development` if Forge reports that the existing Jira installation needs an upgrade or new permissions. Open a Jira issue and expand **Timelogger** to verify it. In the web app's **Settings**, create a Timelogger personal API token and paste it into the Jira panel when prompted; this is different from the Forge CLI token.
+
+The Forge resolver reads `TIMELOGGER_API_ORIGIN`; the outbound domain in `forge/manifest.yml` currently allows `https://timelogger-gilt.vercel.app`. If the web app domain changes, update the manifest origin, run `npx forge variables set --environment development TIMELOGGER_API_ORIGIN https://<your-domain>`, and deploy Forge again. If installing on a different Jira site or environment, use its site host and the same environment consistently for the variable, deployment, and installation. See the [Forge README](forge/README.md) for first-time installation.
 
 The API accepts a Supabase access token or personal API token in `Authorization: Bearer <token>`. See `FEATURES.md` for release scope.
 
