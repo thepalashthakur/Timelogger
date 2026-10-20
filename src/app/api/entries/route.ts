@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: NextRequest) {
   const auth = await authenticated(req);
   if (!auth) return unauthorized();
-  const { data, error } = await auth.client.from('timelogger_time_entries').select('*').order('start_at', { ascending: false }).limit(100);
+  const { data, error } = await auth.client.from('timelogger_time_entries').select('*').eq('user_id', auth.userId).order('start_at', { ascending: false }).limit(100);
   return error ? NextResponse.json({ error: error.message }, { status: 500 }) : NextResponse.json({ entries: data });
 }
 
@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
     return badRequest('Provide valid details and an end after the start');
   }
   const { data, error } = await auth.client.from('timelogger_time_entries').insert({
-    ...fields, user_id: auth.user.id, status: 'stopped',
+    ...fields, user_id: auth.userId, status: 'stopped',
     start_at: start.toISOString(), end_at: end.toISOString(),
     elapsed_seconds: Math.floor((end.getTime() - start.getTime()) / 1000),
   }).select('*').single();

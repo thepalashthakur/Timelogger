@@ -1,12 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { tokenClient } from './supabase';
+import { adminClient, tokenHash } from './admin';
+
+function bearer(req: NextRequest) {
+  return /^Bearer\s+(.+)$/i.exec(req.headers.get('authorization') ?? '')?.[1] ?? null;
+}
+
+export async function authenticatedUser(req: NextRequest) {
+  const token = bearer(req);
+  if (!token || token.startsWith('tl_')) return null;
+  const client = tokenClient(token);
+  const { data, error } = await client.auth.getUser(token);
+  return error || !data.user ? null : { client, userId: data.user.id, kind: 'session' as const };
+}
 
 export async function authenticated(req: NextRequest) {
-  const match = /^Bearer\s+(.+)$/i.exec(req.headers.get('authorization') ?? '');
-  if (!match) return null;
-  const client = tokenClient(match[1]);
-  const { data, error } = await client.auth.getUser(match[1]);
-  return error || !data.user ? null : { client, user: data.user };
+  const token = bearer(req);
+  if (!token) return null;
+  if (!token.startsWith('tl_')) return authenticatedUser(req);
+  if (!/^tl_[A-Za-z0-9_-]{43}$/.test(token)) return null;
+  const client = adminClient();
+  const { data, error } = await client.from('timelogger_api_tokens')
+    .select('id,user_id').eq('token_hash', tokenHash(token))
+    .is('revoked_at', null).gt('expires_at', new Date().toISOString()).maybeSingle();
+  if (error || !data) return null;
+  // Usage metadata is best effort; authentication does not depend on this write.
+  await client.from('timelogger_api_tokens').update({ last_used_at: new Date().toISOString() }).eq('id', data.id);
+  return { client, userId: data.user_id as string, kind: 'api_token' as const };
 }
 
 export const unauthorized = () => NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

@@ -15,6 +15,15 @@ Status reflects code in this repository. Live Supabase and Vercel setup is pendi
 | Additive, prefixed Supabase schema and row level security | Implemented |
 | MUI user interface | Implemented |
 
+## v0.1 — Jira integration groundwork
+
+| Feature | Status |
+| --- | --- |
+| Create and revoke personal API tokens in settings | Implemented |
+| One-time token display, 90-day expiry, hashed storage | Implemented |
+| Use a personal token with timer and entry APIs | Implemented |
+| Native Jira issue panel and account linking | Planned |
+
 ## v1 — custom time entry properties
 
 | Feature | Status |

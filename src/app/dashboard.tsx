@@ -9,6 +9,14 @@ import {
 } from '@mui/material';
 import { browserClient, type TimeEntry } from '@/lib/supabase';
 
+type ApiTokenRecord = {
+  id: string;
+  name: string;
+  created_at: string;
+  expires_at: string;
+  last_used_at: string | null;
+};
+
 function duration(seconds: number) {
   const whole = Math.max(0, Math.floor(seconds));
   return [Math.floor(whole / 3600), Math.floor((whole % 3600) / 60), whole % 60]
@@ -37,6 +45,9 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   const [description, setDescription] = useState('');
   const [entry, setEntry] = useState<TimeEntry | null>(null);
   const [entries, setEntries] = useState<TimeEntry[]>([]);
+  const [apiTokens, setApiTokens] = useState<ApiTokenRecord[]>([]);
+  const [tokenName, setTokenName] = useState('Jira');
+  const [newToken, setNewToken] = useState('');
   const [manualStart, setManualStart] = useState(() => dateTimeLocal(new Date(Date.now() - 3600000)));
   const [manualEnd, setManualEnd] = useState(() => dateTimeLocal(new Date()));
   const [manualProject, setManualProject] = useState('');
@@ -75,15 +86,44 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not load entries'); }
   }, [request, session]);
 
+  const refreshTokens = useCallback(async () => {
+    if (!session) return;
+    try {
+      const data = await request('/api/tokens');
+      setApiTokens(data.tokens);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not load API tokens'); }
+  }, [request, session]);
+
   useEffect(() => {
-    if (!session) { setEntry(null); setEntries([]); return; }
+    if (!session) { setEntry(null); setEntries([]); setApiTokens([]); setNewToken(''); return; }
     void refresh();
+    void refreshTokens();
     const ticker = window.setInterval(() => setNow(Date.now()), 1000);
     const sync = window.setInterval(() => void refresh(), 30000);
     const onFocus = () => void refresh();
     window.addEventListener('focus', onFocus);
     return () => { window.clearInterval(ticker); window.clearInterval(sync); window.removeEventListener('focus', onFocus); };
-  }, [session, refresh]);
+  }, [session, refresh, refreshTokens]);
+
+  async function createToken(event: React.FormEvent) {
+    event.preventDefault(); setBusy(true); setError(''); setNewToken('');
+    try {
+      const data = await request('/api/tokens', { method: 'POST', body: JSON.stringify({ name: tokenName }) });
+      setNewToken(data.token);
+      await refreshTokens();
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not create API token'); }
+    finally { setBusy(false); }
+  }
+
+  async function revokeToken(id: string) {
+    setBusy(true); setError('');
+    try {
+      await request(`/api/tokens/${id}`, { method: 'DELETE' });
+      await refreshTokens();
+      setNotice('API token revoked');
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not revoke API token'); }
+    finally { setBusy(false); }
+  }
 
   async function authenticate(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setError(''); setNotice('');
@@ -185,6 +225,22 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
           <Box><Typography sx={{ fontWeight: 600 }}>{item.task || item.description || 'Untitled work'}</Typography><Typography variant="body2" color="text.secondary">{item.project || 'No project'} · {new Date(item.start_at).toLocaleString()}{item.end_at ? ` – ${new Date(item.end_at).toLocaleTimeString()}` : ''}</Typography>{item.task && item.description && <Typography variant="body2" color="text.secondary">{item.description}</Typography>}</Box>
           <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><Typography sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{duration(currentDuration(item, now))}</Typography><Chip size="small" label={item.status} /></Stack>
         </Stack>{index < entries.length - 1 && <Divider sx={{ mt: 2 }} />}</Box>)}
+      </Stack></Paper>
+      <Paper sx={{ borderRadius: 3, p: 3 }}><Stack spacing={2}>
+        <Box><Typography variant="h6" sx={{ fontWeight: 700 }}>Settings · API tokens</Typography><Typography color="text.secondary">Create a token for the Jira app. Each token expires after 90 days and can be revoked here.</Typography></Box>
+        <Box component="form" onSubmit={createToken}><Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+          <TextField label="Token name" value={tokenName} onChange={(e) => setTokenName(e.target.value)} required slotProps={{ htmlInput: { maxLength: 80 } }} sx={{ minWidth: 240 }} />
+          <Button type="submit" variant="contained" disabled={busy}>Create API token</Button>
+        </Stack></Box>
+        {newToken && <Alert severity="success" action={<Button color="inherit" size="small" onClick={() => void navigator.clipboard.writeText(newToken)}>Copy</Button>}>
+          <Typography sx={{ fontWeight: 600 }}>Copy this token now. It will not be shown again.</Typography>
+          <Typography component="code" sx={{ display: 'block', overflowWrap: 'anywhere', userSelect: 'all' }}>{newToken}</Typography>
+        </Alert>}
+        {apiTokens.length === 0 && <Typography color="text.secondary">No API tokens yet.</Typography>}
+        {apiTokens.map((token) => <Stack key={token.id} direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}>
+          <Box><Typography sx={{ fontWeight: 600 }}>{token.name}</Typography><Typography variant="body2" color="text.secondary">Expires {new Date(token.expires_at).toLocaleDateString()} · {token.last_used_at ? `Last used ${new Date(token.last_used_at).toLocaleString()}` : 'Never used'}</Typography></Box>
+          <Button color="error" disabled={busy} onClick={() => void revokeToken(token.id)}>Revoke</Button>
+        </Stack>)}
       </Stack></Paper>
     </Stack></Container>
   </Box>;

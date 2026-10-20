@@ -4,18 +4,19 @@ A Vercel ready Next.js time tracker using Supabase Auth, Supabase Postgres, and 
 
 ## Setup
 
-1. In your existing Supabase project, review and run `supabase/schema.sql` in its SQL editor. It creates only `timelogger_` objects in one transaction. A name collision aborts the migration without touching existing tables or data.
-2. Copy `.env.example` to `.env.local` and set `SUPABASE_URL` and `SUPABASE_ANON_KEY` to the project URL and publishable/anon key. The server passes the public anon key to the browser for login. The service role key is not used by this app.
+1. In your existing Supabase project, review and run `supabase/schema.sql`, then `supabase/api_tokens.sql`, in its SQL editor. Each creates only `timelogger_` objects in a transaction. A name collision aborts that migration without changing existing tables or data.
+2. Copy `.env.example` to `.env.local` and set `SUPABASE_URL` and `SUPABASE_ANON_KEY` to the project URL and publishable/anon key. Set `SUPABASE_SERVICE_ROLE_KEY` for the server-only personal token routes. The service role key must never be exposed to the browser or Jira app.
 3. Enable email/password authentication in Supabase. Configure the site URL for localhost and your Vercel domain; choose your email confirmation setting.
 4. Run `npm install` and `npm run dev`.
 5. Add the same two environment variables in your Vercel project and deploy.
 
-The API accepts a Supabase access token in `Authorization: Bearer <token>`. See `FEATURES.md` for release scope.
+The API accepts a Supabase access token or personal API token in `Authorization: Bearer <token>`. See `FEATURES.md` for release scope.
 
 ## Timer API
 
-Use a Supabase access token from a signed-in account. All endpoints require
-`Authorization: Bearer <access_token>`; data is restricted to that user.
+Use a Supabase access token from a signed-in account or create a personal token in
+Settings. The timer and entry endpoints require `Authorization: Bearer <token>`;
+data is restricted to that user. Personal tokens cannot create or revoke tokens.
 
 | Method | Path | Body / result |
 | --- | --- | --- |
@@ -25,11 +26,17 @@ Use a Supabase access token from a signed-in account. All endpoints require
 | `GET` | `/api/entries` | 100 most recent entries |
 | `POST` | `/api/entries` | `{ "project": "Website", "task": "Review", "description": "QA", "start_at": "2026-10-20T09:00:00Z", "end_at": "2026-10-20T10:00:00Z" }` |
 
+Token management requires a Supabase login session. `GET /api/tokens` lists token
+metadata, `POST /api/tokens` with `{ "name": "Jira" }` creates a token, and
+`DELETE /api/tokens/{id}` revokes one. The plaintext token is returned only at
+creation, expires after 90 days, and can be revoked immediately. Store it in
+the Jira app's encrypted secret storage; do not put it in Jira frontend code.
+
 For example:
 
 ```sh
 curl -X POST "$APP_URL/api/timer" \
-  -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+  -H "Authorization: Bearer $TIMELOGGER_API_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"action":"pause"}'
 ```
