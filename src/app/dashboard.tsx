@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
-  Alert, AppBar, Box, Button, Card, CardContent, Chip, CircularProgress,
-  Container, Divider, Grid, MenuItem, Pagination, Paper, Stack, Tab, Table,
+  Alert, AppBar, Box, Button, ButtonBase, Card, CardContent, Chip, CircularProgress,
+  Container, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Grid,
+  MenuItem, Pagination, Paper, Stack, Tab, Table,
   TableBody, TableCell, TableContainer, TableHead, TableRow, Tabs, TextField, Toolbar,
-  Typography,
+  ToggleButton, ToggleButtonGroup, Tooltip, Typography,
 } from '@mui/material';
 import { browserClient, type TimeEntry } from '@/lib/supabase';
+import { addDays, layoutDay, startOfWeek } from '@/lib/timeline';
 
 type ApiTokenRecord = {
   id: string;
@@ -17,9 +19,10 @@ type ApiTokenRecord = {
   expires_at: string;
   last_used_at: string | null;
 };
-type View = 'timer' | 'entries' | 'settings';
+type View = 'dashboard' | 'entries' | 'settings';
 type StatusFilter = 'all' | TimeEntry['status'];
 const pageSize = 20;
+const hourHeight = 58;
 
 function duration(seconds: number) {
   const whole = Math.max(0, Math.floor(seconds));
@@ -48,13 +51,23 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
   const [mode, setMode] = useState<'login' | 'signup'>('login');
-  const [view, setView] = useState<View>('timer');
+  const [view, setView] = useState<View>('dashboard');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [project, setProject] = useState('');
   const [task, setTask] = useState('');
   const [description, setDescription] = useState('');
   const [entry, setEntry] = useState<TimeEntry | null>(null);
+  const [timelineMode, setTimelineMode] = useState<'week' | 'day'>('week');
+  const [timelineAnchor, setTimelineAnchor] = useState(() => new Date());
+  const [timelineEntries, setTimelineEntries] = useState<TimeEntry[]>([]);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [timelineError, setTimelineError] = useState('');
+  const [timelineTruncated, setTimelineTruncated] = useState(false);
+  const timelineRequestId = useRef(0);
+  const timelineScrollRef = useRef<HTMLDivElement>(null);
+  const [selectedTimelineEntry, setSelectedTimelineEntry] = useState<TimeEntry | null>(null);
+  const [manualDialogOpen, setManualDialogOpen] = useState(false);
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [entryCount, setEntryCount] = useState(0);
   const [entriesLoading, setEntriesLoading] = useState(false);
@@ -89,7 +102,8 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   useEffect(() => {
     const syncView = () => {
       const hash = window.location.hash.slice(1);
-      if (hash === 'timer' || hash === 'entries' || hash === 'settings') setView(hash);
+      if (hash === 'timer') setView('dashboard');
+      if (hash === 'dashboard' || hash === 'entries' || hash === 'settings') setView(hash);
     };
     syncView();
     window.addEventListener('hashchange', syncView);
@@ -145,6 +159,32 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     }
   }, [request, session, page, search, projectFilter, statusFilter, fromDate, toDate]);
 
+  const timelineDays = useMemo(() => {
+    const first = timelineMode === 'week' ? startOfWeek(timelineAnchor) : new Date(timelineAnchor);
+    first.setHours(0, 0, 0, 0);
+    return Array.from({ length: timelineMode === 'week' ? 7 : 1 }, (_unused, index) => addDays(first, index));
+  }, [timelineAnchor, timelineMode]);
+
+  const loadTimeline = useCallback(async () => {
+    if (!session) return;
+    const id = ++timelineRequestId.current;
+    setTimelineLoading(true);
+    setTimelineError('');
+    const from = timelineDays[0].toISOString();
+    const to = addDays(timelineDays[timelineDays.length - 1], 1).toISOString();
+    try {
+      const data = await request(`/api/timeline?${new URLSearchParams({ from, to })}`);
+      if (id === timelineRequestId.current) {
+        setTimelineEntries(data.entries);
+        setTimelineTruncated(data.truncated);
+      }
+    } catch (caught) {
+      if (id === timelineRequestId.current) setTimelineError(caught instanceof Error ? caught.message : 'Could not load timeline');
+    } finally {
+      if (id === timelineRequestId.current) setTimelineLoading(false);
+    }
+  }, [request, session, timelineDays]);
+
   const refreshTokens = useCallback(async () => {
     if (!session) return;
     try {
@@ -154,7 +194,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   }, [request, session]);
 
   useEffect(() => {
-    if (!session) { setEntry(null); setEntries([]); setApiTokens([]); setNewToken(''); entryRequestId.current += 1; return; }
+    if (!session) { setEntry(null); setEntries([]); setTimelineEntries([]); setApiTokens([]); setNewToken(''); entryRequestId.current += 1; timelineRequestId.current += 1; return; }
     void refreshTimer();
     void refreshTokens();
     const ticker = window.setInterval(() => setNow(Date.now()), 1000);
@@ -171,6 +211,20 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
   }, [session, loadEntries]);
+
+  useEffect(() => {
+    if (!session) return;
+    void loadTimeline();
+    const onFocus = () => void loadTimeline();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [session, loadTimeline]);
+
+  useEffect(() => {
+    if (view !== 'dashboard' || !timelineScrollRef.current) return;
+    const todayVisible = timelineDays.some((day) => day.toDateString() === new Date().toDateString());
+    timelineScrollRef.current.scrollTop = (todayVisible ? Math.max(0, new Date().getHours() - 2) : 8) * hourHeight;
+  }, [view, timelineDays]);
 
   function navigate(next: View) {
     setView(next);
@@ -222,7 +276,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     try {
       const body = action === 'start' ? { action, project, task, description } : { action };
       await request('/api/timer', { method: 'POST', body: JSON.stringify(body) });
-      await Promise.all([refreshTimer(), loadEntries()]);
+      await Promise.all([refreshTimer(), loadEntries(), loadTimeline()]);
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Timer action failed'); }
     finally { setBusy(false); }
   }
@@ -236,9 +290,8 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
       }) });
       setNotice('Time entry added');
       setManualDescription('');
-      clearFilters();
-      navigate('entries');
-      await loadEntries();
+      setManualDialogOpen(false);
+      await Promise.all([loadEntries(), loadTimeline()]);
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not add entry'); }
     finally { setBusy(false); }
   }
@@ -267,39 +320,57 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   return <Box sx={{ minHeight: '100vh', bgcolor: 'grey.50' }}>
     <AppBar position="sticky" elevation={0}><Toolbar><Typography variant="h6" sx={{ flexGrow: 1, fontWeight: 700 }}>Timelogger</Typography><Typography variant="body2" sx={{ display: { xs: 'none', sm: 'block' }, mr: 2 }}>{session.user.email}</Typography><Button color="inherit" onClick={() => void supabase.auth.signOut()}>Sign out</Button></Toolbar></AppBar>
     <Container maxWidth="lg" component="main" sx={{ py: { xs: 2, sm: 4 } }}><Stack spacing={3}>
-      <Paper variant="outlined" sx={{ borderRadius: 3, overflow: 'hidden' }}><Tabs value={view} onChange={(_event, next: View) => navigate(next)} variant="scrollable" scrollButtons="auto" aria-label="Timelogger sections"><Tab label="Timer" value="timer" id="tab-timer" aria-controls="panel-timer" /><Tab label="Time entries" value="entries" id="tab-entries" aria-controls="panel-entries" /><Tab label="Settings" value="settings" id="tab-settings" aria-controls="panel-settings" /></Tabs></Paper>
+      <Paper variant="outlined" sx={{ borderRadius: 3, overflow: 'hidden' }}><Tabs value={view} onChange={(_event, next: View) => navigate(next)} variant="scrollable" scrollButtons="auto" aria-label="Timelogger sections"><Tab label="Dashboard" value="dashboard" id="tab-dashboard" aria-controls="panel-dashboard" /><Tab label="Time entries" value="entries" id="tab-entries" aria-controls="panel-entries" /><Tab label="Settings" value="settings" id="tab-settings" aria-controls="panel-settings" /></Tabs></Paper>
       {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
       {notice && <Alert severity="success" onClose={() => setNotice('')}>{notice}</Alert>}
-      {view === 'timer' && <Box role="tabpanel" id="panel-timer" aria-labelledby="tab-timer"><Stack spacing={3}>
-      <Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Track your time</Typography><Typography color="text.secondary">Start a timer or add an entry for work already done.</Typography></Box>
-      <Grid container spacing={3}>
-        <Grid size={{ xs: 12, md: 7 }}><Card sx={{ height: '100%', borderRadius: 3 }}><CardContent sx={{ p: { xs: 2, sm: 3 } }}><Stack spacing={3}>
-          <Box><Typography variant="h6" sx={{ fontWeight: 700 }}>Timer</Typography><Typography color="text.secondary">Keeps counting even when this page is closed.</Typography></Box>
-          <Typography variant="h2" sx={{ fontWeight: 700, fontSize: { xs: '2.5rem', sm: '3.75rem' }, fontVariantNumeric: 'tabular-nums', letterSpacing: -2 }}>{entry ? duration(currentDuration(entry, now)) : '00:00:00'}</Typography>
-          {entry && <Chip label={entry.status === 'running' ? 'Running' : 'Paused'} color={entry.status === 'running' ? 'success' : 'warning'} sx={{ alignSelf: 'flex-start' }} />}
-          <TextField label="Project" value={entry ? entry.project : project} onChange={(e) => setProject(e.target.value)} disabled={!!entry} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} />
-          <TextField label="Task" value={entry ? entry.task : task} onChange={(e) => setTask(e.target.value)} disabled={!!entry} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} />
-          <TextField label="Description" value={entry ? entry.description : description} onChange={(e) => setDescription(e.target.value)} disabled={!!entry} fullWidth multiline minRows={2} slotProps={{ htmlInput: { maxLength: 500 } }} />
-          <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
-            {!entry && <Button variant="contained" size="large" disabled={busy} onClick={() => void timerAction('start')}>Start timer</Button>}
-            {entry?.status === 'running' && <Button variant="contained" size="large" color="warning" disabled={busy} onClick={() => void timerAction('pause')}>Pause</Button>}
-            {entry?.status === 'paused' && <Button variant="contained" size="large" disabled={busy} onClick={() => void timerAction('resume')}>Resume</Button>}
-            {entry && <Button variant="outlined" size="large" color="error" disabled={busy} onClick={() => void timerAction('stop')}>Stop</Button>}
+      {view === 'dashboard' && <Box role="tabpanel" id="panel-dashboard" aria-labelledby="tab-dashboard"><Stack spacing={2}>
+        <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}><Stack spacing={2}>
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ alignItems: { md: 'center' } }}>
+            <TextField label="What are you working on?" value={entry ? entry.description : description} onChange={(e) => setDescription(e.target.value)} disabled={!!entry} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} />
+            <Typography variant="h5" sx={{ minWidth: 112, fontVariantNumeric: 'tabular-nums', fontWeight: 700, whiteSpace: 'nowrap' }}>{entry ? duration(currentDuration(entry, now)) : '00:00:00'}</Typography>
+            <Stack direction="row" spacing={1}>
+              {!entry && <Button variant="contained" disabled={busy} onClick={() => void timerAction('start')}>Start</Button>}
+              {entry?.status === 'running' && <Button variant="contained" color="warning" disabled={busy} onClick={() => void timerAction('pause')}>Pause</Button>}
+              {entry?.status === 'paused' && <Button variant="contained" disabled={busy} onClick={() => void timerAction('resume')}>Resume</Button>}
+              {entry && <Button variant="outlined" color="error" disabled={busy} onClick={() => void timerAction('stop')}>Stop</Button>}
+            </Stack>
           </Stack>
-        </Stack></CardContent></Card></Grid>
-        <Grid size={{ xs: 12, md: 5 }}><Card sx={{ height: '100%', borderRadius: 3 }}><CardContent sx={{ p: { xs: 2, sm: 3 } }}><Stack spacing={2}>
-          <Box><Typography variant="h6" sx={{ fontWeight: 700 }}>Add time manually</Typography><Typography color="text.secondary">Record a completed work period.</Typography></Box>
-          <Box component="form" onSubmit={createManual}><Stack spacing={2}>
-            <TextField label="Project" value={manualProject} onChange={(e) => setManualProject(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} />
-            <TextField label="Task" value={manualTask} onChange={(e) => setManualTask(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} />
-            <TextField label="Description" value={manualDescription} onChange={(e) => setManualDescription(e.target.value)} fullWidth multiline minRows={2} slotProps={{ htmlInput: { maxLength: 500 } }} />
-            <TextField label="Start" type="datetime-local" value={manualStart} onChange={(e) => setManualStart(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} required fullWidth />
-            <TextField label="End" type="datetime-local" value={manualEnd} onChange={(e) => setManualEnd(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} required fullWidth />
-            <Button type="submit" variant="outlined" disabled={busy}>Add entry</Button>
-          </Stack></Box>
-        </Stack></CardContent></Card></Grid>
-      </Grid>
-      <Paper variant="outlined" sx={{ borderRadius: 3, p: 3 }}><Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between' }}><Box><Typography variant="h6" sx={{ fontWeight: 700 }}>Find your work</Typography><Typography color="text.secondary">Browse and search all of your time entries.</Typography></Box><Button variant="contained" onClick={() => navigate('entries')}>View time entries</Button></Stack></Paper>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+            <TextField label="Project" value={entry ? entry.project : project} onChange={(e) => setProject(e.target.value)} disabled={!!entry} size="small" sx={{ flex: 1 }} slotProps={{ htmlInput: { maxLength: 500 } }} />
+            <TextField label="Task" value={entry ? entry.task : task} onChange={(e) => setTask(e.target.value)} disabled={!!entry} size="small" sx={{ flex: 1 }} slotProps={{ htmlInput: { maxLength: 500 } }} />
+            {entry && <Chip label={entry.status === 'running' ? 'Running' : 'Paused'} color={entry.status === 'running' ? 'success' : 'warning'} sx={{ alignSelf: 'center' }} />}
+            <Button onClick={() => setManualDialogOpen(true)}>Add time manually</Button>
+          </Stack>
+        </Stack></Paper>
+        <Paper variant="outlined" sx={{ borderRadius: 3, overflow: 'hidden' }}><Stack>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ p: 2, alignItems: { sm: 'center' }, justifyContent: 'space-between' }}>
+            <Box><Typography variant="h5" sx={{ fontWeight: 700 }}>Timeline</Typography><Typography variant="body2" color="text.secondary">{timelineMode === 'week' ? `${timelineDays[0].toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${timelineDays[6].toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}` : timelineDays[0].toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })}</Typography></Box>
+            <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', alignItems: 'center' }}>
+              <Button aria-label="Previous period" onClick={() => setTimelineAnchor(addDays(timelineAnchor, timelineMode === 'week' ? -7 : -1))}>‹</Button>
+              <Button onClick={() => setTimelineAnchor(new Date())}>Today</Button>
+              <Button aria-label="Next period" onClick={() => setTimelineAnchor(addDays(timelineAnchor, timelineMode === 'week' ? 7 : 1))}>›</Button>
+              <ToggleButtonGroup size="small" exclusive value={timelineMode} onChange={(_event, value: 'week' | 'day' | null) => { if (value) setTimelineMode(value); }} aria-label="Timeline view"><ToggleButton value="week">Week</ToggleButton><ToggleButton value="day">Day</ToggleButton></ToggleButtonGroup>
+            </Stack>
+          </Stack>
+          <Divider />
+          {timelineError && <Alert severity="error" sx={{ m: 2 }} action={<Button color="inherit" size="small" onClick={() => void loadTimeline()}>Retry</Button>}>{timelineError}</Alert>}
+          {timelineTruncated && <Alert severity="warning" sx={{ m: 2 }}>This period has more than 500 entries. Use the Time entries view to find the rest.</Alert>}
+          {timelineLoading && <Box sx={{ display: 'grid', placeItems: 'center', py: 1 }}><CircularProgress size={24} aria-label="Loading timeline" /></Box>}
+          <Box ref={timelineScrollRef} sx={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 720 }}>
+            <Box sx={{ display: 'grid', gridTemplateColumns: `72px repeat(${timelineDays.length}, minmax(${timelineMode === 'week' ? 130 : 360}px, 1fr))`, minWidth: timelineMode === 'week' ? 980 : 440 }}>
+              <Box sx={{ borderRight: 1, borderBottom: 1, borderColor: 'divider', bgcolor: 'background.paper', position: 'sticky', top: 0, zIndex: 3 }} />
+              {timelineDays.map((day) => <Box key={day.toISOString()} sx={{ p: 1, textAlign: 'center', borderRight: 1, borderBottom: 1, borderColor: 'divider', bgcolor: day.toDateString() === new Date(now).toDateString() ? 'rgba(25,118,210,0.08)' : 'background.paper', position: 'sticky', top: 0, zIndex: 2 }}><Typography variant="body2" sx={{ fontWeight: 700 }}>{day.toLocaleDateString(undefined, { weekday: 'short' })} {day.getDate()}</Typography></Box>)}
+              <Box sx={{ height: 24 * hourHeight, position: 'relative', borderRight: 1, borderColor: 'divider' }}>{Array.from({ length: 24 }, (_unused, hour) => <Typography key={hour} variant="caption" color="text.secondary" sx={{ position: 'absolute', top: hour * hourHeight - 8, right: 8, fontVariantNumeric: 'tabular-nums' }}>{new Date(2020, 0, 1, hour).toLocaleTimeString(undefined, { hour: 'numeric' })}</Typography>)}</Box>
+              {timelineDays.map((day) => <Box key={day.toISOString()} sx={{ height: 24 * hourHeight, position: 'relative', borderRight: 1, borderColor: 'divider', bgcolor: day.toDateString() === new Date(now).toDateString() ? 'rgba(25,118,210,0.025)' : 'background.paper' }}>
+                {Array.from({ length: 24 }, (_unused, hour) => <Box key={hour} sx={{ position: 'absolute', top: hour * hourHeight, left: 0, right: 0, borderTop: 1, borderColor: 'divider' }} />)}
+                {layoutDay(timelineEntries, day, now).map((segment) => <Tooltip key={segment.entry.id} title={`${segment.entry.task || segment.entry.description || 'Untitled work'} · ${duration(currentDuration(segment.entry, now))}`}><ButtonBase onClick={() => setSelectedTimelineEntry(segment.entry)} sx={{ position: 'absolute', top: segment.startMinute * hourHeight / 60, height: Math.max(20, (segment.endMinute - segment.startMinute) * hourHeight / 60), left: `calc(${segment.lane * 100 / segment.laneCount}% + 2px)`, width: `calc(${100 / segment.laneCount}% - 4px)`, bgcolor: segment.entry.status === 'running' ? 'success.light' : segment.entry.status === 'paused' ? 'warning.light' : 'primary.light', borderLeft: 3, borderColor: segment.entry.status === 'running' ? 'success.main' : segment.entry.status === 'paused' ? 'warning.main' : 'primary.main', borderRadius: 1, px: 0.5, overflow: 'hidden', textAlign: 'left', alignItems: 'flex-start', justifyContent: 'flex-start', zIndex: 1 }}><Typography variant="caption" sx={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'text.primary' }}>{segment.entry.task || segment.entry.description || 'Untitled work'}</Typography></ButtonBase></Tooltip>)}
+                {day.toDateString() === new Date(now).toDateString() && <Box sx={{ position: 'absolute', top: (new Date(now).getHours() * 60 + new Date(now).getMinutes()) * hourHeight / 60, left: 0, right: 0, borderTop: 2, borderColor: 'error.main', pointerEvents: 'none', zIndex: 2 }} />}
+              </Box>)}
+            </Box>
+          </Box>
+          <Divider />
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ p: 2, justifyContent: 'space-between', alignItems: { sm: 'center' } }}><Typography variant="body2" color="text.secondary">Blocks show entry start and end times. Paused timers use a short marker at their start because pause time is not stored. Tracked duration excludes pauses.</Typography><Button onClick={() => navigate('entries')}>Search time entries</Button></Stack>
+        </Stack></Paper>
       </Stack></Box>}
       {view === 'entries' && <Box role="tabpanel" id="panel-entries" aria-labelledby="tab-entries"><Stack spacing={3}>
         <Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Time entries</Typography><Typography color="text.secondary">Search across projects, tasks, and descriptions. Use filters to narrow the results.</Typography></Box>
@@ -318,7 +389,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
           <Divider />
           {entriesError && <Alert severity="error" sx={{ m: 2 }} action={<Button color="inherit" size="small" onClick={() => void loadEntries()}>Retry</Button>}>{entriesError}</Alert>}
           {entriesLoading && <Box sx={{ display: 'grid', placeItems: 'center', py: 6 }}><CircularProgress aria-label="Loading entries" /></Box>}
-          {!entriesLoading && !entriesError && entries.length === 0 && <Box sx={{ p: 4, textAlign: 'center' }}><Typography variant="h6">No entries found</Typography><Typography color="text.secondary">{search || projectFilter || statusFilter !== 'all' || fromDate || toDate ? 'Try another search or clear the filters.' : 'Start a timer or add time manually to see it here.'}</Typography>{!search && !projectFilter && statusFilter === 'all' && !fromDate && !toDate && <Button sx={{ mt: 2 }} onClick={() => navigate('timer')}>Go to timer</Button>}</Box>}
+          {!entriesLoading && !entriesError && entries.length === 0 && <Box sx={{ p: 4, textAlign: 'center' }}><Typography variant="h6">No entries found</Typography><Typography color="text.secondary">{search || projectFilter || statusFilter !== 'all' || fromDate || toDate ? 'Try another search or clear the filters.' : 'Start a timer or add time manually to see it here.'}</Typography>{!search && !projectFilter && statusFilter === 'all' && !fromDate && !toDate && <Button sx={{ mt: 2 }} onClick={() => navigate('dashboard')}>Go to dashboard</Button>}</Box>}
           {!entriesLoading && !entriesError && entries.length > 0 && <>
             <TableContainer sx={{ display: { xs: 'none', md: 'block' } }}><Table aria-label="Time entries"><TableHead><TableRow><TableCell>Work</TableCell><TableCell>Project</TableCell><TableCell>Started</TableCell><TableCell>Status</TableCell><TableCell align="right">Duration</TableCell></TableRow></TableHead><TableBody>
               {entries.map((item) => <TableRow key={item.id} hover><TableCell><Typography sx={{ fontWeight: 600 }}>{item.task || 'Untitled work'}</Typography>{item.description && <Typography variant="body2" color="text.secondary">{item.description}</Typography>}</TableCell><TableCell>{item.project || '—'}</TableCell><TableCell>{new Date(item.start_at).toLocaleString()}</TableCell><TableCell><Chip size="small" label={item.status} color={item.status === 'running' ? 'success' : item.status === 'paused' ? 'warning' : 'default'} /></TableCell><TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{duration(currentDuration(item, now))}</TableCell></TableRow>)}
@@ -348,5 +419,19 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
       </Stack></Paper>
       </Stack></Box>}
     </Stack></Container>
+    <Dialog open={manualDialogOpen} onClose={() => setManualDialogOpen(false)} fullWidth maxWidth="sm"><Box component="form" onSubmit={createManual}><DialogTitle>Add time manually</DialogTitle><DialogContent><Stack spacing={2} sx={{ pt: 1 }}>
+      <TextField label="Project" value={manualProject} onChange={(e) => setManualProject(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} />
+      <TextField label="Task" value={manualTask} onChange={(e) => setManualTask(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} />
+      <TextField label="Description" value={manualDescription} onChange={(e) => setManualDescription(e.target.value)} fullWidth multiline minRows={2} slotProps={{ htmlInput: { maxLength: 500 } }} />
+      <TextField label="Start" type="datetime-local" value={manualStart} onChange={(e) => setManualStart(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} required fullWidth />
+      <TextField label="End" type="datetime-local" value={manualEnd} onChange={(e) => setManualEnd(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} required fullWidth />
+      {error && <Alert severity="error">{error}</Alert>}
+    </Stack></DialogContent><DialogActions><Button onClick={() => setManualDialogOpen(false)}>Cancel</Button><Button type="submit" variant="contained" disabled={busy}>Add entry</Button></DialogActions></Box></Dialog>
+    <Dialog open={!!selectedTimelineEntry} onClose={() => setSelectedTimelineEntry(null)} fullWidth maxWidth="xs"><DialogTitle>Time entry</DialogTitle><DialogContent><Stack spacing={1}>
+      <Typography variant="h6">{selectedTimelineEntry?.task || selectedTimelineEntry?.description || 'Untitled work'}</Typography>
+      <Typography>Project: {selectedTimelineEntry?.project || 'No project'}</Typography>
+      {selectedTimelineEntry?.description && <Typography color="text.secondary">{selectedTimelineEntry.description}</Typography>}
+      {selectedTimelineEntry && <><Typography>Started: {new Date(selectedTimelineEntry.start_at).toLocaleString()}</Typography><Typography>{selectedTimelineEntry.end_at ? `Ended: ${new Date(selectedTimelineEntry.end_at).toLocaleString()}` : `Status: ${selectedTimelineEntry.status}`}</Typography><Typography sx={{ fontVariantNumeric: 'tabular-nums' }}>Tracked: {duration(currentDuration(selectedTimelineEntry, now))}</Typography></>}
+    </Stack></DialogContent><DialogActions><Button onClick={() => setSelectedTimelineEntry(null)}>Close</Button></DialogActions></Dialog>
   </Box>;
 }
