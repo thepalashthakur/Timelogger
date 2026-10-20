@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
-  Alert, AppBar, Box, Button, ButtonBase, Card, CardContent, Chip, CircularProgress,
+  Alert, AppBar, Autocomplete, Box, Button, ButtonBase, Card, CardContent, Chip, CircularProgress,
   Container, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Grid,
   MenuItem, Pagination, Paper, Stack, Tab, Table,
   TableBody, TableCell, TableContainer, TableHead, TableRow, Tabs, TextField, Toolbar,
@@ -19,8 +19,12 @@ type ApiTokenRecord = {
   expires_at: string;
   last_used_at: string | null;
 };
-type View = 'dashboard' | 'entries' | 'settings';
+type View = 'dashboard' | 'entries' | 'catalog' | 'settings';
 type StatusFilter = 'all' | TimeEntry['status'];
+type ProjectRecord = { id: string; key: string; name: string; color: string; archived: boolean };
+type TaskRecord = { id: string; project_id: string; key: string; name: string; archived: boolean };
+type TagRecord = { id: string; name: string; color: string };
+type CatalogKind = 'project' | 'task' | 'tag';
 const pageSize = 20;
 const defaultHourHeight = 58;
 
@@ -58,6 +62,23 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   const [task, setTask] = useState('');
   const [description, setDescription] = useState('');
   const [entry, setEntry] = useState<TimeEntry | null>(null);
+  const [projects, setProjects] = useState<ProjectRecord[]>([]);
+  const [tasks, setTasks] = useState<TaskRecord[]>([]);
+  const [tags, setTags] = useState<TagRecord[]>([]);
+  const [catalogError, setCatalogError] = useState('');
+  const [catalogReady, setCatalogReady] = useState(false);
+  const [entryTagIds, setEntryTagIds] = useState<Record<string, string[]>>({});
+  const [startTagIds, setStartTagIds] = useState<string[]>([]);
+  const [manualTagIds, setManualTagIds] = useState<string[]>([]);
+  const [editTagIds, setEditTagIds] = useState<string[]>([]);
+  const [catalogDialog, setCatalogDialog] = useState<{ kind: CatalogKind; item?: ProjectRecord | TaskRecord | TagRecord } | null>(null);
+  const [catalogName, setCatalogName] = useState('');
+  const [catalogKey, setCatalogKey] = useState('');
+  const [catalogColor, setCatalogColor] = useState('#1976d2');
+  const [catalogProjectId, setCatalogProjectId] = useState('');
+  const [catalogDialogError, setCatalogDialogError] = useState('');
+  const [catalogTarget, setCatalogTarget] = useState<'timer' | 'manual' | 'edit' | 'catalog'>('catalog');
+  const [deletingTag, setDeletingTag] = useState<TagRecord | null>(null);
   const [timelineMode, setTimelineMode] = useState<'week' | 'day'>('week');
   const [timelineAnchor, setTimelineAnchor] = useState(() => new Date());
   const [hourHeight, setHourHeight] = useState(defaultHourHeight);
@@ -85,6 +106,8 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [projectFilter, setProjectFilter] = useState('');
+  const [taskFilter, setTaskFilter] = useState('');
+  const [tagFilter, setTagFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
@@ -113,7 +136,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     const syncView = () => {
       const hash = window.location.hash.slice(1);
       if (hash === 'timer') setView('dashboard');
-      if (hash === 'dashboard' || hash === 'entries' || hash === 'settings') setView(hash);
+      if (hash === 'dashboard' || hash === 'entries' || hash === 'catalog' || hash === 'settings') setView(hash);
     };
     syncView();
     window.addEventListener('hashchange', syncView);
@@ -140,13 +163,36 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     return body;
   }, [supabase]);
 
+  const loadCatalog = useCallback(async () => {
+    if (!session) return;
+    try {
+      const data = await request('/api/catalog');
+      setProjects(data.projects); setTasks(data.tasks); setTags(data.tags);
+      setCatalogError(''); setCatalogReady(true);
+    } catch (caught) {
+      setCatalogError(caught instanceof Error ? caught.message : 'Could not load projects and tags');
+      setCatalogReady(false);
+    }
+  }, [request, session]);
+
+  const loadTagIds = useCallback(async (ids: string[]) => {
+    if (!ids.length || !catalogReady) return;
+    try {
+      const batches = Array.from({ length: Math.ceil(ids.length / 100) }, (_unused, index) => ids.slice(index * 100, index * 100 + 100));
+      const results = await Promise.all(batches.map((batch) => request(`/api/entry-tags?${new URLSearchParams({ ids: batch.join(',') })}`)));
+      const byEntry = Object.assign({}, ...results.map((result) => result.tags_by_entry)) as Record<string, string[]>;
+      setEntryTagIds((previous) => ({ ...previous, ...Object.fromEntries(ids.map((id) => [id, byEntry[id] ?? []])) }));
+    } catch (caught) { setCatalogError(caught instanceof Error ? caught.message : 'Could not load entry tags'); }
+  }, [request, catalogReady]);
+
   const refreshTimer = useCallback(async () => {
     if (!session) return;
     try {
       const data = await request('/api/timer');
       setEntry(data.entry);
+      if (data.entry) void loadTagIds([data.entry.id]);
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not load timer'); }
-  }, [request, session]);
+  }, [request, session, loadTagIds]);
 
   const loadEntries = useCallback(async () => {
     if (!session) return;
@@ -156,18 +202,20 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
     if (search) params.set('q', search);
     if (projectFilter.trim()) params.set('project', projectFilter.trim());
+    if (taskFilter.trim()) params.set('task', taskFilter.trim());
+    if (tagFilter) params.set('tag_id', tagFilter);
     if (statusFilter !== 'all') params.set('status', statusFilter);
     if (fromDate) params.set('from', dateBoundary(fromDate));
     if (toDate) params.set('to', dateBoundary(toDate, true));
     try {
       const data = await request(`/api/entries?${params}`);
-      if (id === entryRequestId.current) { setEntries(data.entries); setEntryCount(data.count); }
+      if (id === entryRequestId.current) { setEntries(data.entries); setEntryCount(data.count); void loadTagIds(data.entries.map((item: TimeEntry) => item.id)); }
     } catch (caught) {
       if (id === entryRequestId.current) setEntriesError(caught instanceof Error ? caught.message : 'Could not load entries');
     } finally {
       if (id === entryRequestId.current) setEntriesLoading(false);
     }
-  }, [request, session, page, search, projectFilter, statusFilter, fromDate, toDate]);
+  }, [request, session, page, search, projectFilter, taskFilter, tagFilter, statusFilter, fromDate, toDate, loadTagIds]);
 
   const timelineDays = useMemo(() => {
     const first = timelineMode === 'week' ? startOfWeek(timelineAnchor) : new Date(timelineAnchor);
@@ -187,13 +235,14 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
       if (id === timelineRequestId.current) {
         setTimelineEntries(data.entries);
         setTimelineTruncated(data.truncated);
+        void loadTagIds(data.entries.map((item: TimeEntry) => item.id));
       }
     } catch (caught) {
       if (id === timelineRequestId.current) setTimelineError(caught instanceof Error ? caught.message : 'Could not load timeline');
     } finally {
       if (id === timelineRequestId.current) setTimelineLoading(false);
     }
-  }, [request, session, timelineDays]);
+  }, [request, session, timelineDays, loadTagIds]);
 
   const refreshTokens = useCallback(async () => {
     if (!session) return;
@@ -204,7 +253,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   }, [request, session]);
 
   useEffect(() => {
-    if (!session) { setEntry(null); setEntries([]); setTimelineEntries([]); setApiTokens([]); setNewToken(''); entryRequestId.current += 1; timelineRequestId.current += 1; return; }
+    if (!session) { setEntry(null); setEntries([]); setTimelineEntries([]); setProjects([]); setTasks([]); setTags([]); setCatalogReady(false); setEntryTagIds({}); setApiTokens([]); setNewToken(''); entryRequestId.current += 1; timelineRequestId.current += 1; return; }
     void refreshTimer();
     void refreshTokens();
     const ticker = window.setInterval(() => setNow(Date.now()), 1000);
@@ -213,6 +262,14 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     window.addEventListener('focus', onFocus);
     return () => { window.clearInterval(ticker); window.clearInterval(sync); window.removeEventListener('focus', onFocus); };
   }, [session, refreshTimer, refreshTokens]);
+
+  useEffect(() => {
+    if (!session) return;
+    void loadCatalog();
+    const onFocus = () => void loadCatalog();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [session, loadCatalog]);
 
   useEffect(() => {
     if (!session) return;
@@ -251,8 +308,85 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   }
 
   function clearFilters() {
-    setSearchInput(''); setSearch(''); setProjectFilter(''); setStatusFilter('all');
+    setSearchInput(''); setSearch(''); setProjectFilter(''); setTaskFilter(''); setTagFilter(''); setStatusFilter('all');
     setFromDate(''); setToDate(''); setPage(1);
+  }
+
+  function categoryPayload(projectKey: string, taskKey: string) {
+    const selectedProject = projects.find((item) => !item.archived && item.key === projectKey);
+    const selectedTask = tasks.find((item) => !item.archived && item.project_id === selectedProject?.id && item.key === taskKey);
+    return selectedProject && (!taskKey || selectedTask)
+      ? { project_id: selectedProject.id, task_id: selectedTask?.id ?? '' }
+      : {};
+  }
+
+  function projectLabel(key: string) {
+    return projects.find((item) => item.key === key)?.name ?? key;
+  }
+
+  function taskLabel(projectKey: string, key: string) {
+    const projectId = projects.find((item) => item.key === projectKey)?.id;
+    return tasks.find((item) => item.project_id === projectId && item.key === key)?.name ?? key;
+  }
+
+  function entryTags(id: string) {
+    return tags.filter((item) => (entryTagIds[id] ?? []).includes(item.id));
+  }
+
+  function openCatalog(kind: CatalogKind, target: typeof catalogTarget = 'catalog', item?: ProjectRecord | TaskRecord | TagRecord) {
+    setCatalogTarget(target); setCatalogDialog({ kind, item }); setCatalogDialogError('');
+    setCatalogName(item?.name ?? '');
+    setCatalogKey(item && 'key' in item ? item.key : '');
+    setCatalogColor(item && 'color' in item ? item.color : kind === 'tag' ? '#757575' : '#1976d2');
+    const targetProject = target === 'timer' ? project : target === 'manual' ? manualProject : target === 'edit' ? editProject : '';
+    setCatalogProjectId(item && 'project_id' in item ? item.project_id : projects.find((record) => record.key === targetProject)?.id ?? '');
+  }
+
+  async function saveCatalog(event: React.FormEvent) {
+    event.preventDefault();
+    if (!catalogDialog) return;
+    setBusy(true); setCatalogDialogError('');
+    try {
+      const { kind, item } = catalogDialog;
+      const payload = item
+        ? { name: catalogName, ...(kind !== 'task' ? { color: catalogColor } : {}) }
+        : { kind, name: catalogName, key: catalogKey || undefined, project_id: catalogProjectId || undefined, ...(kind !== 'task' ? { color: catalogColor } : {}) };
+      const data = await request(item ? `/api/catalog/${kind}s/${item.id}` : '/api/catalog', { method: item ? 'PATCH' : 'POST', body: JSON.stringify(payload) });
+      if (!item) {
+        if (kind === 'project') {
+          if (catalogTarget === 'timer') { setProject(data.item.key); setTask(''); }
+          if (catalogTarget === 'manual') { setManualProject(data.item.key); setManualTask(''); }
+          if (catalogTarget === 'edit') { setEditProject(data.item.key); setEditTask(''); }
+        }
+        if (kind === 'task') {
+          const parent = projects.find((record) => record.id === data.item.project_id);
+          if (catalogTarget === 'timer') { setProject(parent?.key ?? ''); setTask(data.item.key); }
+          if (catalogTarget === 'manual') { setManualProject(parent?.key ?? ''); setManualTask(data.item.key); }
+          if (catalogTarget === 'edit') { setEditProject(parent?.key ?? ''); setEditTask(data.item.key); }
+        }
+        if (kind === 'tag') {
+          if (catalogTarget === 'timer') setStartTagIds((ids) => [...ids, data.item.id]);
+          if (catalogTarget === 'manual') setManualTagIds((ids) => [...ids, data.item.id]);
+          if (catalogTarget === 'edit') setEditTagIds((ids) => [...ids, data.item.id]);
+        }
+      }
+      setCatalogDialog(null);
+      setNotice(`${kind[0].toUpperCase()}${kind.slice(1)} ${item ? 'updated' : 'created'}`);
+      await loadCatalog();
+    } catch (caught) { setCatalogDialogError(caught instanceof Error ? caught.message : 'Could not save item'); }
+    finally { setBusy(false); }
+  }
+
+  async function changeCatalogState(kind: CatalogKind, id: string, archived: boolean) {
+    setBusy(true); setError('');
+    try {
+      await request(`/api/catalog/${kind}s/${id}`, { method: archived ? 'PATCH' : 'DELETE', ...(archived ? { body: JSON.stringify({ archived: false }) } : {}) });
+      if (kind === 'tag') setTagFilter((current) => current === id ? '' : current);
+      await loadCatalog();
+      setNotice(archived ? 'Item restored' : kind === 'tag' ? 'Tag deleted' : 'Item archived');
+      return true;
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not update item'); return false; }
+    finally { setBusy(false); }
   }
 
   async function createToken(event: React.FormEvent) {
@@ -293,9 +427,10 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   async function timerAction(action: 'start' | 'pause' | 'resume' | 'stop') {
     setBusy(true); setError(''); setNotice('');
     try {
-      const body = action === 'start' ? { action, project, task, description } : { action };
+      const body = action === 'start' ? { action, project, task, description, ...categoryPayload(project, task), ...(catalogReady ? { tag_ids: startTagIds } : {}) } : { action };
       await request('/api/timer', { method: 'POST', body: JSON.stringify(body) });
       await Promise.all([refreshTimer(), loadEntries(), loadTimeline()]);
+      if (action === 'start') setStartTagIds([]);
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Timer action failed'); }
     finally { setBusy(false); }
   }
@@ -305,10 +440,12 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     try {
       await request('/api/entries', { method: 'POST', body: JSON.stringify({
         project: manualProject, task: manualTask, description: manualDescription,
+        ...categoryPayload(manualProject, manualTask), ...(catalogReady ? { tag_ids: manualTagIds } : {}),
         start_at: new Date(manualStart).toISOString(), end_at: new Date(manualEnd).toISOString(),
       }) });
       setNotice('Time entry added');
       setManualDescription('');
+      setManualTagIds([]);
       setManualDialogOpen(false);
       await Promise.all([loadEntries(), loadTimeline()]);
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not add entry'); }
@@ -323,6 +460,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     setEditDescription(item.description);
     setEditStart(dateTimeLocal(new Date(item.start_at)));
     setEditEnd(item.end_at ? dateTimeLocal(new Date(item.end_at)) : '');
+    setEditTagIds(entryTagIds[item.id] ?? []);
     setEditingEntry(item);
   }
 
@@ -335,6 +473,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
       const endChanged = editingEntry.status === 'stopped' && !!editingEntry.end_at && editEnd !== dateTimeLocal(new Date(editingEntry.end_at));
       await request(`/api/entries/${editingEntry.id}`, { method: 'PATCH', body: JSON.stringify({
         project: editProject, task: editTask, description: editDescription,
+        ...categoryPayload(editProject, editTask), ...(catalogReady ? { tag_ids: editTagIds } : {}),
         ...(startChanged ? { start_at: new Date(editStart).toISOString() } : {}),
         ...(endChanged ? { end_at: new Date(editEnd).toISOString() } : {}),
       }) });
@@ -384,9 +523,10 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   return <Box sx={{ minHeight: '100vh', bgcolor: 'grey.50' }}>
     <AppBar position="sticky" elevation={0}><Toolbar><Typography variant="h6" sx={{ flexGrow: 1, fontWeight: 700 }}>Timelogger</Typography><Typography variant="body2" sx={{ display: { xs: 'none', sm: 'block' }, mr: 2 }}>{session.user.email}</Typography><Button color="inherit" onClick={() => void supabase.auth.signOut()}>Sign out</Button></Toolbar></AppBar>
     <Container maxWidth="lg" component="main" sx={{ py: { xs: 2, sm: 4 } }}><Stack spacing={3}>
-      <Paper variant="outlined" sx={{ borderRadius: 3, overflow: 'hidden' }}><Tabs value={view} onChange={(_event, next: View) => navigate(next)} variant="scrollable" scrollButtons="auto" aria-label="Timelogger sections"><Tab label="Dashboard" value="dashboard" id="tab-dashboard" aria-controls="panel-dashboard" /><Tab label="Time entries" value="entries" id="tab-entries" aria-controls="panel-entries" /><Tab label="Settings" value="settings" id="tab-settings" aria-controls="panel-settings" /></Tabs></Paper>
+      <Paper variant="outlined" sx={{ borderRadius: 3, overflow: 'hidden' }}><Tabs value={view} onChange={(_event, next: View) => navigate(next)} variant="scrollable" scrollButtons="auto" aria-label="Timelogger sections"><Tab label="Dashboard" value="dashboard" id="tab-dashboard" aria-controls="panel-dashboard" /><Tab label="Time entries" value="entries" id="tab-entries" aria-controls="panel-entries" /><Tab label="Projects & tags" value="catalog" id="tab-catalog" aria-controls="panel-catalog" /><Tab label="Settings" value="settings" id="tab-settings" aria-controls="panel-settings" /></Tabs></Paper>
       {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
       {notice && <Alert severity="success" onClose={() => setNotice('')}>{notice}</Alert>}
+      {catalogError && <Alert severity="warning" onClose={() => setCatalogError('')}>Projects, tasks, and tags are unavailable: {catalogError}. Apply <code>supabase/catalog.sql</code> to enable v0.5.</Alert>}
       {view === 'dashboard' && <Box role="tabpanel" id="panel-dashboard" aria-labelledby="tab-dashboard"><Stack spacing={2}>
         <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}><Stack spacing={2}>
           <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ alignItems: { md: 'center' } }}>
@@ -400,11 +540,13 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
             </Stack>
           </Stack>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-            <TextField label="Project" value={entry ? entry.project : project} onChange={(e) => setProject(e.target.value)} disabled={!!entry} size="small" sx={{ flex: 1 }} slotProps={{ htmlInput: { maxLength: 500 } }} />
-            <TextField label="Task" value={entry ? entry.task : task} onChange={(e) => setTask(e.target.value)} disabled={!!entry} size="small" sx={{ flex: 1 }} slotProps={{ htmlInput: { maxLength: 500 } }} />
+            {catalogReady ? <TextField select label="Project" value={entry ? entry.project : project} onChange={(e) => { setProject(e.target.value); setTask(''); }} disabled={!!entry} size="small" sx={{ flex: 1 }}><MenuItem value="">No project</MenuItem>{projects.filter((item) => !item.archived).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{(entry ? entry.project : project) && !projects.some((item) => item.key === (entry ? entry.project : project)) && <MenuItem value={entry ? entry.project : project}>{entry ? entry.project : project} (legacy)</MenuItem>}</TextField> : <TextField label="Project" value={entry ? entry.project : project} onChange={(e) => setProject(e.target.value)} disabled={!!entry} size="small" sx={{ flex: 1 }} slotProps={{ htmlInput: { maxLength: 500 } }} />}
+            {catalogReady ? <TextField select label="Task" value={entry ? entry.task : task} onChange={(e) => setTask(e.target.value)} disabled={!!entry} size="small" sx={{ flex: 1 }}><MenuItem value="">No task</MenuItem>{tasks.filter((item) => !item.archived && item.project_id === projects.find((record) => record.key === (entry ? entry.project : project))?.id).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{(entry ? entry.task : task) && !tasks.some((item) => item.key === (entry ? entry.task : task) && item.project_id === projects.find((record) => record.key === (entry ? entry.project : project))?.id) && <MenuItem value={entry ? entry.task : task}>{entry ? entry.task : task} (legacy)</MenuItem>}</TextField> : <TextField label="Task" value={entry ? entry.task : task} onChange={(e) => setTask(e.target.value)} disabled={!!entry} size="small" sx={{ flex: 1 }} slotProps={{ htmlInput: { maxLength: 500 } }} />}
             {entry && <Chip label={entry.status === 'running' ? 'Running' : 'Paused'} color={entry.status === 'running' ? 'success' : 'warning'} sx={{ alignSelf: 'center' }} />}
+            {!entry && catalogReady && <><Button onClick={() => openCatalog('project', 'timer')}>New project</Button><Button onClick={() => openCatalog('task', 'timer')} disabled={!projects.some((item) => item.key === project)}>New task</Button></>}
             <Button onClick={() => setManualDialogOpen(true)}>Add time manually</Button>
           </Stack>
+          {catalogReady && <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><Autocomplete multiple size="small" options={tags} getOptionLabel={(option) => option.name} value={tags.filter((item) => (entry ? entryTagIds[entry.id] ?? [] : startTagIds).includes(item.id))} onChange={(_event, value) => setStartTagIds(value.map((item) => item.id))} disabled={!!entry} renderInput={(params) => <TextField {...params} label="Tags" placeholder="Choose tags" />} sx={{ flex: 1 }} />{!entry && <Button onClick={() => openCatalog('tag', 'timer')}>New tag</Button>}{entry && <Button onClick={() => openEdit(entry)}>Edit entry</Button>}</Stack>}
         </Stack></Paper>
         <Paper variant="outlined" sx={{ borderRadius: 3, overflow: 'hidden' }}><Stack>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ p: 2, alignItems: { sm: 'center' }, justifyContent: 'space-between' }}>
@@ -432,7 +574,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
               <Box sx={{ height: 24 * hourHeight, position: 'relative', borderRight: 1, borderColor: 'divider' }}>{Array.from({ length: 24 }, (_unused, hour) => <Typography key={hour} variant="caption" color="text.secondary" sx={{ position: 'absolute', top: hour * hourHeight - 8, right: 8, fontVariantNumeric: 'tabular-nums' }}>{new Date(2020, 0, 1, hour).toLocaleTimeString(undefined, { hour: 'numeric' })}</Typography>)}</Box>
               {timelineDays.map((day) => <Box key={day.toISOString()} sx={{ height: 24 * hourHeight, position: 'relative', borderRight: 1, borderColor: 'divider', bgcolor: day.toDateString() === new Date(now).toDateString() ? 'rgba(25,118,210,0.025)' : 'background.paper' }}>
                 {Array.from({ length: 24 }, (_unused, hour) => <Box key={hour} sx={{ position: 'absolute', top: hour * hourHeight, left: 0, right: 0, borderTop: 1, borderColor: 'divider' }} />)}
-                {layoutDay(timelineEntries, day, now).map((segment) => <Tooltip key={segment.entry.id} title={`${segment.entry.task || segment.entry.description || 'Untitled work'} · ${duration(currentDuration(segment.entry, now))}`}><ButtonBase onClick={() => setSelectedTimelineEntry(segment.entry)} sx={{ position: 'absolute', top: segment.startMinute * hourHeight / 60, height: Math.max(20, (segment.endMinute - segment.startMinute) * hourHeight / 60), left: `calc(${segment.lane * 100 / segment.laneCount}% + 2px)`, width: `calc(${100 / segment.laneCount}% - 4px)`, bgcolor: segment.entry.status === 'running' ? 'success.light' : segment.entry.status === 'paused' ? 'warning.light' : 'primary.light', borderLeft: 3, borderColor: segment.entry.status === 'running' ? 'success.main' : segment.entry.status === 'paused' ? 'warning.main' : 'primary.main', borderRadius: 1, px: 0.5, overflow: 'hidden', textAlign: 'left', alignItems: 'flex-start', justifyContent: 'flex-start', zIndex: 1 }}><Typography variant="caption" sx={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'text.primary' }}>{segment.entry.task || segment.entry.description || 'Untitled work'}</Typography></ButtonBase></Tooltip>)}
+                {layoutDay(timelineEntries, day, now).map((segment) => <Tooltip key={segment.entry.id} title={`${taskLabel(segment.entry.project, segment.entry.task) || segment.entry.description || 'Untitled work'} · ${duration(currentDuration(segment.entry, now))}`}><ButtonBase onClick={() => setSelectedTimelineEntry(segment.entry)} sx={{ position: 'absolute', top: segment.startMinute * hourHeight / 60, height: Math.max(20, (segment.endMinute - segment.startMinute) * hourHeight / 60), left: `calc(${segment.lane * 100 / segment.laneCount}% + 2px)`, width: `calc(${100 / segment.laneCount}% - 4px)`, bgcolor: segment.entry.status === 'running' ? 'success.light' : segment.entry.status === 'paused' ? 'warning.light' : 'primary.light', borderLeft: 3, borderColor: projects.find((item) => item.key === segment.entry.project)?.color ?? (segment.entry.status === 'running' ? 'success.main' : segment.entry.status === 'paused' ? 'warning.main' : 'primary.main'), borderRadius: 1, px: 0.5, overflow: 'hidden', textAlign: 'left', alignItems: 'flex-start', justifyContent: 'flex-start', zIndex: 1 }}><Typography variant="caption" sx={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'text.primary' }}>{taskLabel(segment.entry.project, segment.entry.task) || segment.entry.description || 'Untitled work'}</Typography></ButtonBase></Tooltip>)}
                 {day.toDateString() === new Date(now).toDateString() && <Box sx={{ position: 'absolute', top: (new Date(now).getHours() * 60 + new Date(now).getMinutes()) * hourHeight / 60, left: 0, right: 0, borderTop: 2, borderColor: 'error.main', pointerEvents: 'none', zIndex: 2 }} />}
               </Box>)}
             </Box>
@@ -447,25 +589,42 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
           <Grid container spacing={2}>
             <Grid size={{ xs: 12, md: 6 }}><TextField label="Search entries" placeholder="Project, task, or description" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 100 } }} /></Grid>
             <Grid size={{ xs: 12, sm: 6, md: 3 }}><TextField label="Project contains" value={projectFilter} onChange={(e) => { setProjectFilter(e.target.value); setPage(1); }} fullWidth slotProps={{ htmlInput: { maxLength: 100 } }} /></Grid>
+            <Grid size={{ xs: 12, sm: 6, md: 3 }}><TextField label="Task contains" value={taskFilter} onChange={(e) => { setTaskFilter(e.target.value); setPage(1); }} fullWidth slotProps={{ htmlInput: { maxLength: 100 } }} /></Grid>
+            {catalogReady && <Grid size={{ xs: 12, sm: 6, md: 3 }}><TextField select label="Tag" value={tagFilter} onChange={(e) => { setTagFilter(e.target.value); setPage(1); }} fullWidth><MenuItem value="">All tags</MenuItem>{tags.map((item) => <MenuItem key={item.id} value={item.id}>{item.name}</MenuItem>)}</TextField></Grid>}
             <Grid size={{ xs: 12, sm: 6, md: 3 }}><TextField select label="Status" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value as StatusFilter); setPage(1); }} fullWidth><MenuItem value="all">All statuses</MenuItem><MenuItem value="running">Running</MenuItem><MenuItem value="paused">Paused</MenuItem><MenuItem value="stopped">Stopped</MenuItem></TextField></Grid>
             <Grid size={{ xs: 12, sm: 6, md: 3 }}><TextField label="From date" type="date" value={fromDate} onChange={(e) => { setFromDate(e.target.value); setPage(1); }} fullWidth slotProps={{ inputLabel: { shrink: true } }} /></Grid>
             <Grid size={{ xs: 12, sm: 6, md: 3 }}><TextField label="To date" type="date" value={toDate} onChange={(e) => { setToDate(e.target.value); setPage(1); }} fullWidth slotProps={{ inputLabel: { shrink: true } }} /></Grid>
           </Grid>
-          <Box><Button onClick={clearFilters} disabled={!searchInput && !projectFilter && statusFilter === 'all' && !fromDate && !toDate}>Clear filters</Button></Box>
+          <Box><Button onClick={clearFilters} disabled={!searchInput && !projectFilter && !taskFilter && !tagFilter && statusFilter === 'all' && !fromDate && !toDate}>Clear filters</Button></Box>
         </Stack></Paper>
         <Paper variant="outlined" sx={{ borderRadius: 3, overflow: 'hidden' }}><Stack>
           <Box sx={{ p: { xs: 2, sm: 3 }, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2 }}><Typography variant="h6" sx={{ fontWeight: 700 }}>Results</Typography><Typography variant="body2" color="text.secondary" aria-live="polite">{entriesLoading ? 'Loading…' : `${entryCount} ${entryCount === 1 ? 'entry' : 'entries'}`}</Typography></Box>
           <Divider />
           {entriesError && <Alert severity="error" sx={{ m: 2 }} action={<Button color="inherit" size="small" onClick={() => void loadEntries()}>Retry</Button>}>{entriesError}</Alert>}
           {entriesLoading && <Box sx={{ display: 'grid', placeItems: 'center', py: 6 }}><CircularProgress aria-label="Loading entries" /></Box>}
-          {!entriesLoading && !entriesError && entries.length === 0 && <Box sx={{ p: 4, textAlign: 'center' }}><Typography variant="h6">No entries found</Typography><Typography color="text.secondary">{search || projectFilter || statusFilter !== 'all' || fromDate || toDate ? 'Try another search or clear the filters.' : 'Start a timer or add time manually to see it here.'}</Typography>{!search && !projectFilter && statusFilter === 'all' && !fromDate && !toDate && <Button sx={{ mt: 2 }} onClick={() => navigate('dashboard')}>Go to dashboard</Button>}</Box>}
+          {!entriesLoading && !entriesError && entries.length === 0 && <Box sx={{ p: 4, textAlign: 'center' }}><Typography variant="h6">No entries found</Typography><Typography color="text.secondary">{search || projectFilter || taskFilter || tagFilter || statusFilter !== 'all' || fromDate || toDate ? 'Try another search or clear the filters.' : 'Start a timer or add time manually to see it here.'}</Typography>{!search && !projectFilter && !taskFilter && !tagFilter && statusFilter === 'all' && !fromDate && !toDate && <Button sx={{ mt: 2 }} onClick={() => navigate('dashboard')}>Go to dashboard</Button>}</Box>}
           {!entriesLoading && !entriesError && entries.length > 0 && <>
             <TableContainer sx={{ display: { xs: 'none', md: 'block' } }}><Table aria-label="Time entries"><TableHead><TableRow><TableCell>Work and actions</TableCell><TableCell>Project</TableCell><TableCell>Started</TableCell><TableCell>Status</TableCell><TableCell align="right">Duration</TableCell></TableRow></TableHead><TableBody>
-              {entries.map((item) => <TableRow key={item.id} hover><TableCell><Typography sx={{ fontWeight: 600 }}>{item.task || 'Untitled work'}</Typography>{item.description && <Typography variant="body2" color="text.secondary">{item.description}</Typography>}<Stack direction="row" spacing={0.5} sx={{ mt: 0.5 }}><Button size="small" onClick={() => openEdit(item)} aria-label={`Edit ${item.task || 'time entry'}`}>Edit</Button><Button size="small" color="error" onClick={() => { setEntryDialogError(''); setDeletingEntry(item); }} aria-label={`Delete ${item.task || 'time entry'}`}>Delete</Button></Stack></TableCell><TableCell>{item.project || '—'}</TableCell><TableCell>{new Date(item.start_at).toLocaleString()}</TableCell><TableCell><Chip size="small" label={item.status} color={item.status === 'running' ? 'success' : item.status === 'paused' ? 'warning' : 'default'} /></TableCell><TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{duration(currentDuration(item, now))}</TableCell></TableRow>)}
+              {entries.map((item) => <TableRow key={item.id} hover><TableCell><Typography sx={{ fontWeight: 600 }}>{taskLabel(item.project, item.task) || 'Untitled work'}</Typography>{item.description && <Typography variant="body2" color="text.secondary">{item.description}</Typography>}{entryTags(item.id).map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={{ mr: 0.5, mt: 0.5, bgcolor: tag.color, color: 'white' }} />)}<Stack direction="row" spacing={0.5} sx={{ mt: 0.5 }}><Button size="small" onClick={() => openEdit(item)} aria-label={`Edit ${item.task || 'time entry'}`}>Edit</Button><Button size="small" color="error" onClick={() => { setEntryDialogError(''); setDeletingEntry(item); }} aria-label={`Delete ${item.task || 'time entry'}`}>Delete</Button></Stack></TableCell><TableCell>{projectLabel(item.project) || '—'}</TableCell><TableCell>{new Date(item.start_at).toLocaleString()}</TableCell><TableCell><Chip size="small" label={item.status} color={item.status === 'running' ? 'success' : item.status === 'paused' ? 'warning' : 'default'} /></TableCell><TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{duration(currentDuration(item, now))}</TableCell></TableRow>)}
             </TableBody></Table></TableContainer>
-            <Stack divider={<Divider />} sx={{ display: { xs: 'flex', md: 'none' } }}>{entries.map((item) => <Box key={item.id} sx={{ p: 2 }}><Stack direction="row" spacing={2} sx={{ justifyContent: 'space-between', alignItems: 'flex-start' }}><Box><Typography sx={{ fontWeight: 600 }}>{item.task || 'Untitled work'}</Typography><Typography variant="body2" color="text.secondary">{item.project || 'No project'} · {new Date(item.start_at).toLocaleString()}</Typography>{item.description && <Typography variant="body2" color="text.secondary">{item.description}</Typography>}</Box><Typography sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, whiteSpace: 'nowrap' }}>{duration(currentDuration(item, now))}</Typography></Stack><Chip size="small" label={item.status} color={item.status === 'running' ? 'success' : item.status === 'paused' ? 'warning' : 'default'} sx={{ mt: 1 }} /><Stack direction="row" spacing={1} sx={{ mt: 1 }}><Button size="small" onClick={() => openEdit(item)}>Edit</Button><Button size="small" color="error" onClick={() => { setEntryDialogError(''); setDeletingEntry(item); }}>Delete</Button></Stack></Box>)}</Stack>
+            <Stack divider={<Divider />} sx={{ display: { xs: 'flex', md: 'none' } }}>{entries.map((item) => <Box key={item.id} sx={{ p: 2 }}><Stack direction="row" spacing={2} sx={{ justifyContent: 'space-between', alignItems: 'flex-start' }}><Box><Typography sx={{ fontWeight: 600 }}>{taskLabel(item.project, item.task) || 'Untitled work'}</Typography><Typography variant="body2" color="text.secondary">{projectLabel(item.project) || 'No project'} · {new Date(item.start_at).toLocaleString()}</Typography>{item.description && <Typography variant="body2" color="text.secondary">{item.description}</Typography>}{entryTags(item.id).map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={{ mr: 0.5, mt: 0.5, bgcolor: tag.color, color: 'white' }} />)}</Box><Typography sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, whiteSpace: 'nowrap' }}>{duration(currentDuration(item, now))}</Typography></Stack><Chip size="small" label={item.status} color={item.status === 'running' ? 'success' : item.status === 'paused' ? 'warning' : 'default'} sx={{ mt: 1 }} /><Stack direction="row" spacing={1} sx={{ mt: 1 }}><Button size="small" onClick={() => openEdit(item)}>Edit</Button><Button size="small" color="error" onClick={() => { setEntryDialogError(''); setDeletingEntry(item); }}>Delete</Button></Stack></Box>)}</Stack>
           </>}
           {!entriesLoading && !entriesError && entryCount > pageSize && <Box sx={{ p: 2, display: 'flex', justifyContent: 'center' }}><Pagination count={Math.ceil(entryCount / pageSize)} page={page} onChange={(_event, next) => setPage(next)} showFirstButton showLastButton color="primary" aria-label="Time entry pages" /></Box>}
+        </Stack></Paper>
+      </Stack></Box>}
+      {view === 'catalog' && <Box role="tabpanel" id="panel-catalog" aria-labelledby="tab-catalog"><Stack spacing={3}>
+        <Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Projects, tasks & tags</Typography><Typography color="text.secondary">Projects group work. Each task belongs to one project. Tags can be used across projects.</Typography></Box>
+        <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}><Stack spacing={2}><Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}><Typography variant="h6">Projects</Typography><Button variant="contained" onClick={() => openCatalog('project')}>New project</Button></Stack>
+          {!projects.length && <Typography color="text.secondary">No projects yet.</Typography>}
+          {projects.map((item) => <Stack key={item.id} direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between', borderTop: 1, borderColor: 'divider', pt: 1 }}><Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><Box sx={{ width: 16, height: 16, borderRadius: 1, bgcolor: item.color }} /><Typography sx={{ fontWeight: 600 }}>{item.name}</Typography><Typography variant="body2" color="text.secondary">{item.key}</Typography>{item.archived && <Chip size="small" label="Archived" />}</Stack><Stack direction="row" spacing={1}><Button size="small" onClick={() => openCatalog('project', 'catalog', item)}>Edit</Button><Button size="small" onClick={() => void changeCatalogState('project', item.id, item.archived)} disabled={busy}>{item.archived ? 'Restore' : 'Archive'}</Button></Stack></Stack>)}
+        </Stack></Paper>
+        <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}><Stack spacing={2}><Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}><Typography variant="h6">Tasks</Typography><Button variant="contained" onClick={() => openCatalog('task')} disabled={!projects.some((item) => !item.archived)}>New task</Button></Stack>
+          {!tasks.length && <Typography color="text.secondary">No tasks yet. Create a project first.</Typography>}
+          {tasks.map((item) => <Stack key={item.id} direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between', borderTop: 1, borderColor: 'divider', pt: 1 }}><Box><Typography sx={{ fontWeight: 600 }}>{item.name} {item.archived && <Chip size="small" label="Archived" />}</Typography><Typography variant="body2" color="text.secondary">{projects.find((record) => record.id === item.project_id)?.name ?? 'Unknown project'} · {item.key}</Typography></Box><Stack direction="row" spacing={1}><Button size="small" onClick={() => openCatalog('task', 'catalog', item)}>Edit</Button><Button size="small" onClick={() => void changeCatalogState('task', item.id, item.archived)} disabled={busy}>{item.archived ? 'Restore' : 'Archive'}</Button></Stack></Stack>)}
+        </Stack></Paper>
+        <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}><Stack spacing={2}><Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}><Typography variant="h6">Tags</Typography><Button variant="contained" onClick={() => openCatalog('tag')}>New tag</Button></Stack>
+          {!tags.length && <Typography color="text.secondary">No tags yet.</Typography>}
+          {tags.map((item) => <Stack key={item.id} direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between', borderTop: 1, borderColor: 'divider', pt: 1 }}><Chip label={item.name} sx={{ bgcolor: item.color, color: 'white' }} /><Stack direction="row" spacing={1}><Button size="small" onClick={() => openCatalog('tag', 'catalog', item)}>Edit</Button><Button size="small" color="error" onClick={() => setDeletingTag(item)}>Delete</Button></Stack></Stack>)}
         </Stack></Paper>
       </Stack></Box>}
       {view === 'settings' && <Box role="tabpanel" id="panel-settings" aria-labelledby="tab-settings"><Stack spacing={3}>
@@ -489,26 +648,35 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
       </Stack></Box>}
     </Stack></Container>
     <Dialog open={manualDialogOpen} onClose={() => setManualDialogOpen(false)} fullWidth maxWidth="sm"><Box component="form" onSubmit={createManual}><DialogTitle>Add time manually</DialogTitle><DialogContent><Stack spacing={2} sx={{ pt: 1 }}>
-      <TextField label="Project" value={manualProject} onChange={(e) => setManualProject(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} />
-      <TextField label="Task" value={manualTask} onChange={(e) => setManualTask(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} />
+      {catalogReady ? <><TextField select label="Project" value={manualProject} onChange={(e) => { setManualProject(e.target.value); setManualTask(''); }} fullWidth><MenuItem value="">No project</MenuItem>{projects.filter((item) => !item.archived).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{manualProject && !projects.some((item) => item.key === manualProject) && <MenuItem value={manualProject}>{manualProject} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('project', 'manual')}>New project</Button><TextField select label="Task" value={manualTask} onChange={(e) => setManualTask(e.target.value)} fullWidth><MenuItem value="">No task</MenuItem>{tasks.filter((item) => !item.archived && item.project_id === projects.find((record) => record.key === manualProject)?.id).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{manualTask && !tasks.some((item) => item.key === manualTask && item.project_id === projects.find((record) => record.key === manualProject)?.id) && <MenuItem value={manualTask}>{manualTask} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('task', 'manual')} disabled={!projects.some((item) => item.key === manualProject)}>New task</Button></> : <><TextField label="Project" value={manualProject} onChange={(e) => setManualProject(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /><TextField label="Task" value={manualTask} onChange={(e) => setManualTask(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /></>}
       <TextField label="Description" value={manualDescription} onChange={(e) => setManualDescription(e.target.value)} fullWidth multiline minRows={2} slotProps={{ htmlInput: { maxLength: 500 } }} />
+      {catalogReady && <Stack direction="row" spacing={1}><Autocomplete multiple options={tags} getOptionLabel={(option) => option.name} value={tags.filter((item) => manualTagIds.includes(item.id))} onChange={(_event, value) => setManualTagIds(value.map((item) => item.id))} renderInput={(params) => <TextField {...params} label="Tags" />} sx={{ flex: 1 }} /><Button onClick={() => openCatalog('tag', 'manual')}>New tag</Button></Stack>}
       <TextField label="Start" type="datetime-local" value={manualStart} onChange={(e) => setManualStart(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} required fullWidth />
       <TextField label="End" type="datetime-local" value={manualEnd} onChange={(e) => setManualEnd(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} required fullWidth />
       {error && <Alert severity="error">{error}</Alert>}
     </Stack></DialogContent><DialogActions><Button onClick={() => setManualDialogOpen(false)}>Cancel</Button><Button type="submit" variant="contained" disabled={busy}>Add entry</Button></DialogActions></Box></Dialog>
     <Dialog open={!!selectedTimelineEntry} onClose={() => setSelectedTimelineEntry(null)} fullWidth maxWidth="xs"><DialogTitle>Time entry</DialogTitle><DialogContent><Stack spacing={1}>
-      <Typography variant="h6">{selectedTimelineEntry?.task || selectedTimelineEntry?.description || 'Untitled work'}</Typography>
-      <Typography>Project: {selectedTimelineEntry?.project || 'No project'}</Typography>
+      <Typography variant="h6">{selectedTimelineEntry ? taskLabel(selectedTimelineEntry.project, selectedTimelineEntry.task) || selectedTimelineEntry.description || 'Untitled work' : ''}</Typography>
+      <Typography>Project: {selectedTimelineEntry ? projectLabel(selectedTimelineEntry.project) || 'No project' : ''}</Typography>
       {selectedTimelineEntry?.description && <Typography color="text.secondary">{selectedTimelineEntry.description}</Typography>}
+      {selectedTimelineEntry && <Stack direction="row" spacing={0.5}>{entryTags(selectedTimelineEntry.id).map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={{ bgcolor: tag.color, color: 'white' }} />)}</Stack>}
       {selectedTimelineEntry && <><Typography>Started: {new Date(selectedTimelineEntry.start_at).toLocaleString()}</Typography><Typography>{selectedTimelineEntry.end_at ? `Ended: ${new Date(selectedTimelineEntry.end_at).toLocaleString()}` : `Status: ${selectedTimelineEntry.status}`}</Typography><Typography sx={{ fontVariantNumeric: 'tabular-nums' }}>Tracked: {duration(currentDuration(selectedTimelineEntry, now))}</Typography></>}
     </Stack></DialogContent><DialogActions>{selectedTimelineEntry && <><Button onClick={() => openEdit(selectedTimelineEntry)}>Edit</Button><Button color="error" onClick={() => { setEntryDialogError(''); setDeletingEntry(selectedTimelineEntry); setSelectedTimelineEntry(null); }}>Delete</Button></>}<Button onClick={() => setSelectedTimelineEntry(null)}>Close</Button></DialogActions></Dialog>
     <Dialog open={!!editingEntry} onClose={() => { if (!busy) setEditingEntry(null); }} fullWidth maxWidth="sm"><Box component="form" onSubmit={updateEntry}><DialogTitle>Edit time entry</DialogTitle><DialogContent><Stack spacing={2} sx={{ pt: 1 }}>
-      <TextField label="Project" value={editProject} onChange={(e) => setEditProject(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} />
-      <TextField label="Task" value={editTask} onChange={(e) => setEditTask(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} />
+      {catalogReady ? <><TextField select label="Project" value={editProject} onChange={(e) => { setEditProject(e.target.value); setEditTask(''); }} fullWidth><MenuItem value="">No project</MenuItem>{projects.filter((item) => !item.archived || item.key === editProject).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{editProject && !projects.some((item) => item.key === editProject) && <MenuItem value={editProject}>{editProject} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('project', 'edit')}>New project</Button><TextField select label="Task" value={editTask} onChange={(e) => setEditTask(e.target.value)} fullWidth><MenuItem value="">No task</MenuItem>{tasks.filter((item) => (!item.archived || item.key === editTask) && item.project_id === projects.find((record) => record.key === editProject)?.id).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{editTask && !tasks.some((item) => item.key === editTask && item.project_id === projects.find((record) => record.key === editProject)?.id) && <MenuItem value={editTask}>{editTask} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('task', 'edit')} disabled={!projects.some((item) => item.key === editProject)}>New task</Button></> : <><TextField label="Project" value={editProject} onChange={(e) => setEditProject(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /><TextField label="Task" value={editTask} onChange={(e) => setEditTask(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /></>}
       <TextField label="Description" value={editDescription} onChange={(e) => setEditDescription(e.target.value)} fullWidth multiline minRows={2} slotProps={{ htmlInput: { maxLength: 500 } }} />
+      {catalogReady && <Stack direction="row" spacing={1}><Autocomplete multiple options={tags} getOptionLabel={(option) => option.name} value={tags.filter((item) => editTagIds.includes(item.id))} onChange={(_event, value) => setEditTagIds(value.map((item) => item.id))} renderInput={(params) => <TextField {...params} label="Tags" />} sx={{ flex: 1 }} /><Button onClick={() => openCatalog('tag', 'edit')}>New tag</Button></Stack>}
       {editingEntry?.status === 'stopped' ? <><TextField label="Start" type="datetime-local" value={editStart} onChange={(e) => setEditStart(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} required fullWidth /><TextField label="End" type="datetime-local" value={editEnd} onChange={(e) => setEditEnd(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} required fullWidth /><Typography variant="body2" color="text.secondary">Changing start or end time recalculates tracked duration from the new time range.</Typography></> : <Typography variant="body2" color="text.secondary">Stop this timer to edit its start and end times.</Typography>}
       {entryDialogError && <Alert severity="error">{entryDialogError}</Alert>}
     </Stack></DialogContent><DialogActions><Button onClick={() => setEditingEntry(null)} disabled={busy}>Cancel</Button><Button type="submit" variant="contained" disabled={busy}>Save changes</Button></DialogActions></Box></Dialog>
     <Dialog open={!!deletingEntry} onClose={() => { if (!busy) setDeletingEntry(null); }} fullWidth maxWidth="xs"><DialogTitle>Delete time entry?</DialogTitle><DialogContent><Typography>Delete “{deletingEntry?.task || deletingEntry?.description || 'Untitled work'}”? {deletingEntry?.status === 'stopped' ? 'This cannot be undone.' : 'This will remove the active timer and cannot be undone.'}</Typography>{entryDialogError && <Alert severity="error" sx={{ mt: 2 }}>{entryDialogError}</Alert>}</DialogContent><DialogActions><Button onClick={() => setDeletingEntry(null)} disabled={busy}>Cancel</Button><Button variant="contained" color="error" onClick={() => void deleteEntry()} disabled={busy}>Delete entry</Button></DialogActions></Dialog>
+    <Dialog open={!!catalogDialog} onClose={() => { if (!busy) setCatalogDialog(null); }} fullWidth maxWidth="xs"><Box component="form" onSubmit={saveCatalog}><DialogTitle>{catalogDialog?.item ? 'Edit' : 'New'} {catalogDialog?.kind}</DialogTitle><DialogContent><Stack spacing={2} sx={{ pt: 1 }}>
+      <TextField label="Name" value={catalogName} onChange={(event) => setCatalogName(event.target.value)} required fullWidth slotProps={{ htmlInput: { maxLength: catalogDialog?.kind === 'tag' ? 100 : 200 } }} />
+      {catalogDialog?.kind !== 'tag' && <TextField label="Key" value={catalogKey} onChange={(event) => setCatalogKey(event.target.value)} disabled={!!catalogDialog?.item} helperText={catalogDialog?.item ? 'Keys stay fixed so past entries and Jira links remain stable.' : 'Optional; generated from the name if blank. Use a Jira project or issue key when relevant.'} fullWidth slotProps={{ htmlInput: { maxLength: 100 } }} />}
+      {catalogDialog?.kind === 'task' && <TextField select label="Project" value={catalogProjectId} onChange={(event) => setCatalogProjectId(event.target.value)} disabled={!!catalogDialog?.item} required fullWidth>{projects.filter((item) => !item.archived || item.id === catalogProjectId).map((item) => <MenuItem key={item.id} value={item.id}>{item.name} ({item.key})</MenuItem>)}</TextField>}
+      {catalogDialog?.kind !== 'task' && <TextField label="Color" type="color" value={catalogColor} onChange={(event) => setCatalogColor(event.target.value)} fullWidth slotProps={{ inputLabel: { shrink: true } }} />}
+      {catalogDialogError && <Alert severity="error">{catalogDialogError}</Alert>}
+    </Stack></DialogContent><DialogActions><Button onClick={() => setCatalogDialog(null)} disabled={busy}>Cancel</Button><Button type="submit" variant="contained" disabled={busy}>Save</Button></DialogActions></Box></Dialog>
+    <Dialog open={!!deletingTag} onClose={() => setDeletingTag(null)} fullWidth maxWidth="xs"><DialogTitle>Delete tag?</DialogTitle><DialogContent><Typography>Delete “{deletingTag?.name}” from your tag list and all entries? This cannot be undone.</Typography>{error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}</DialogContent><DialogActions><Button onClick={() => setDeletingTag(null)}>Cancel</Button><Button color="error" variant="contained" disabled={busy} onClick={() => { if (deletingTag) void changeCatalogState('tag', deletingTag.id, false).then((saved) => { if (saved) setDeletingTag(null); }); }}>Delete tag</Button></DialogActions></Dialog>
   </Box>;
 }
