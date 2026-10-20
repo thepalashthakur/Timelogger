@@ -27,6 +27,7 @@ data is restricted to that user. Personal tokens cannot create or revoke tokens.
 | `POST` | `/api/timer` | `{ "action": "pause" }`, `{ "action": "resume" }`, or `{ "action": "stop" }` |
 | `GET` | `/api/entries` | Paginated entries; defaults to the 100 most recent |
 | `POST` | `/api/entries` | `{ "project": "Website", "task": "Review", "description": "QA", "start_at": "2026-10-20T09:00:00Z", "end_at": "2026-10-20T10:00:00Z" }` |
+| `GET` | `/api/timeline?from=<ISO>&to=<ISO>` | Entries overlapping a period of up to 32 days; returns `entries`, `count`, and `truncated` (500 entry limit) |
 
 Token management requires a Supabase login session. `GET /api/tokens` lists token
 metadata, `POST /api/tokens` with `{ "name": "Jira" }` creates a token, and

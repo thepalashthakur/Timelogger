@@ -36,6 +36,18 @@ Status reflects code in this repository. The web app and Jira Forge app are depl
 | Server-side pagination and result count across full entry history | Implemented |
 | Manual entry flow opens the entries view after saving | Implemented |
 
+## v0.3 — dashboard timeline
+
+| Feature | Status |
+| --- | --- |
+| Dashboard with compact timer controls and manual entry dialog | Implemented |
+| Weekly and daily hourly timeline with previous, next, and today navigation | Implemented |
+| Entry details on timeline blocks and current time indicator | Implemented |
+| Authenticated timeline API with entries overlapping the selected period | Implemented |
+| Responsive horizontal scrolling for the weekly calendar | Implemented |
+
+Release versioning: new feature releases increase the minor version by `0.1` (for example, `0.2.0` to `0.3.0`). Dashboard bug fixes increase the patch by `0.0.1` (for example, `0.3.0` to `0.3.1`).
+
 ## v1 — custom time entry properties
 
 | Feature | Status |
