@@ -2,11 +2,11 @@
 
 This Forge app adds a Timelogger panel to Jira issues. Each Jira user connects their own Timelogger personal API token. The Forge resolver stores that token with `kvs.setSecret`, then calls the Timelogger API on the user's behalf. The token is never returned to Custom UI.
 
-Starting a timer uses the Jira issue key as `task` and the key prefix as `project`. The panel can pause, resume, and stop the active timer and shows the five most recent entries for the issue. Timelogger remains the source of time entries; this version does not create Jira worklogs.
+Starting a timer uses the Jira issue key as `task` and the key prefix as `project`. Timelogger creates matching managed project and task records when the catalog migration is installed, while retaining the Jira keys on entries. The panel can apply existing Timelogger tags, pause, resume, and stop the active timer, and shows the five most recent entries for the issue. Timelogger remains the source of time entries; this version does not create Jira worklogs.
 
 ## Prerequisites
 
-- A deployed HTTPS Timelogger app with `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and server-only `SUPABASE_SERVICE_ROLE_KEY` configured, and both SQL migrations applied.
+- A deployed HTTPS Timelogger app with `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and server-only `SUPABASE_SERVICE_ROLE_KEY` configured, and all three SQL migrations applied.
 - Node.js. The [Forge CLI](https://developer.atlassian.com/platform/forge/getting-started/) is installed locally by `npm install`.
 - A Jira Cloud site where you can install Forge apps.
 

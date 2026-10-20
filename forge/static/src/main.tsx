@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { invoke, view } from '@forge/bridge';
 import {
-  Alert, Box, Button, Card, CardContent, CircularProgress, Divider,
+  Alert, Autocomplete, Box, Button, Card, CardContent, CircularProgress, Divider,
   Stack, TextField, Typography,
 } from '@mui/material';
 
@@ -16,6 +16,7 @@ type Entry = {
   last_resumed_at: string | null;
   elapsed_seconds: number;
 };
+type Tag = { id: string; name: string; color: string };
 
 async function call<T extends object>(key: string, payload?: Record<string, unknown>): Promise<T> {
   const result = await invoke<T>(key, payload);
@@ -40,17 +41,21 @@ function App() {
   const [entry, setEntry] = useState<Entry | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [description, setDescription] = useState('');
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [now, setNow] = useState(Date.now());
 
   async function refresh() {
-    const [timer, history] = await Promise.all([
+    const [timer, history, catalog] = await Promise.all([
       call<{ entry: Entry | null }>('timer'),
       call<{ entries: Entry[] }>('entries'),
+      call<{ tags: Tag[] }>('catalog').catch(() => ({ tags: [] })),
     ]);
     setEntry(timer.entry);
     setEntries(history.entries);
+    setTags(catalog.tags);
   }
 
   useEffect(() => {
@@ -113,8 +118,10 @@ function App() {
             </Stack>
           </> : <>
             <TextField label="Description" value={description} onChange={(event) => setDescription(event.target.value)} slotProps={{ htmlInput: { maxLength: 500 } }} fullWidth />
+            <Autocomplete multiple options={tags} getOptionLabel={(option) => option.name} value={tags.filter((tag) => selectedTagIds.includes(tag.id))} onChange={(_event, value) => setSelectedTagIds(value.map((tag) => tag.id))} renderInput={(params) => <TextField {...params} label="Tags" placeholder="Optional" />} />
             <Button variant="contained" disabled={busy || !issueKey} onClick={() => run(async () => {
-              await invoke('timerAction', { action: 'start', project, task: issueKey, description });
+              await invoke('timerAction', { action: 'start', project, task: issueKey, description, tag_ids: selectedTagIds });
+              setSelectedTagIds([]);
               await refresh();
             })}>Start timer for {issueKey || 'this issue'}</Button>
           </>}

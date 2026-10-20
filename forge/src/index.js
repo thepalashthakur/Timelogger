@@ -67,6 +67,8 @@ export const handler = makeResolver({
 
   entries: async ({ context }) => request('/api/entries', await storedToken(context)),
 
+  catalog: async ({ context }) => request('/api/catalog', await storedToken(context)),
+
   timerAction: async ({ context, payload }) => {
     const action = payload?.action;
     if (!actions.has(action)) throw new Error('Invalid timer action');
@@ -78,6 +80,10 @@ export const handler = makeResolver({
         }
         body[field] = payload[field].trim();
       }
+      if (!Array.isArray(payload?.tag_ids) || payload.tag_ids.length > 30 || payload.tag_ids.some((id) => typeof id !== 'string' || !/^[0-9a-f-]{36}$/i.test(id))) {
+        throw new Error('Invalid tags');
+      }
+      body.tag_ids = payload.tag_ids;
     }
     return request('/api/timer', await storedToken(context), 'POST', body);
   },
