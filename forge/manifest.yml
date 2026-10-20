@@ -1,0 +1,30 @@
+modules:
+  jira:issuePanel:
+    - key: timelogger-issue-panel
+      resource: main
+      resolver:
+        function: resolver
+      title: Timelogger
+  function:
+    - key: resolver
+      handler: src/index.handler
+resources:
+  - key: main
+    path: static/dist
+app:
+  id: ari:cloud:ecosystem::app/00000000-0000-0000-0000-000000000000
+  runtime:
+    name: nodejs24.x
+permissions:
+  scopes:
+    - storage:app
+  external:
+    fetch:
+      backend:
+        - address: ${TIMELOGGER_API_ORIGIN}
+  content:
+    styles:
+      - unsafe-inline
+environment:
+  variables:
+    - TIMELOGGER_API_ORIGIN

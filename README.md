@@ -12,6 +12,8 @@ A Vercel ready Next.js time tracker using Supabase Auth, Supabase Postgres, and 
 
 The API accepts a Supabase access token or personal API token in `Authorization: Bearer <token>`. See `FEATURES.md` for release scope.
 
+The Jira Cloud issue panel lives in [`forge/`](forge/README.md). It requires separate Forge registration and installation.
+
 ## Timer API
 
 Use a Supabase access token from a signed-in account or create a personal token in
@@ -44,10 +46,3 @@ curl -X POST "$APP_URL/api/timer" \
 The duration is stored in the `public.timelogger_time_entries` table. The browser only displays elapsed time from
 persisted timestamps, so a timer continues when the tab or browser is closed.
 At most one timer can be running or paused per user.
-
-## Git history in this workspace
-
-This environment blocks creating the usual `.git` directory. Feature commits are
-stored in `.timelogger-git`. To inspect them here, use
-`git --git-dir=.timelogger-git --work-tree=. log --oneline`. In a normal filesystem,
-rename `.timelogger-git` to `.git` for standard Git commands.

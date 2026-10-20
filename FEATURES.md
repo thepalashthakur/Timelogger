@@ -22,7 +22,8 @@ Status reflects code in this repository. Live Supabase and Vercel setup is pendi
 | Create and revoke personal API tokens in settings | Implemented |
 | One-time token display, 90-day expiry, hashed storage | Implemented |
 | Use a personal token with timer and entry APIs | Implemented |
-| Native Jira issue panel and account linking | Planned |
+| Native Jira issue panel and account linking | Implemented in Forge source; installation pending |
+| Start, pause, resume, and stop Timelogger timer from a Jira issue | Implemented in Forge source; installation pending |
 
 ## v1 — custom time entry properties
 
