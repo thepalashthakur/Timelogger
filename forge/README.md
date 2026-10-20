@@ -7,7 +7,7 @@ Starting a timer uses the Jira issue key as `task` and the key prefix as `projec
 ## Prerequisites
 
 - A deployed HTTPS Timelogger app with `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and server-only `SUPABASE_SERVICE_ROLE_KEY` configured, and both SQL migrations applied.
-- Node.js and the [Forge CLI](https://developer.atlassian.com/platform/forge/getting-started/).
+- Node.js. The [Forge CLI](https://developer.atlassian.com/platform/forge/getting-started/) is installed locally by `npm install`.
 - A Jira Cloud site where you can install Forge apps.
 
 ## Register and install
@@ -18,12 +18,12 @@ From this `forge` directory:
 npm install
 npm --prefix static install
 npm run build
-forge login
+npx forge login
 export TIMELOGGER_API_ORIGIN=https://your-timelogger-domain.example
-forge register
-forge variables set TIMELOGGER_API_ORIGIN "$TIMELOGGER_API_ORIGIN"
-forge deploy
-forge install --site your-site.atlassian.net --product Jira
+npx forge register
+npx forge variables set TIMELOGGER_API_ORIGIN "$TIMELOGGER_API_ORIGIN"
+npx forge deploy
+npx forge install --site your-site.atlassian.net --product Jira
 ```
 
 Set `TIMELOGGER_API_ORIGIN` to the exact HTTPS origin, without a path or trailing slash. Forge uses the shell variable to expand the manifest egress permission and its runtime variable for API requests. `forge register` replaces the placeholder `app.id` in `manifest.yml`. The Jira site administrator must approve the requested storage and outbound fetch permissions. After changing the origin, rebuild and redeploy; reinstall or upgrade the app if Forge asks for permission approval.
@@ -32,4 +32,4 @@ In Timelogger, sign in and create a token under Settings. Open a Jira issue, exp
 
 ## Local verification
 
-`npm run build` builds the Custom UI into `static/dist`. `forge lint` validates the manifest and resolver after Forge CLI is installed. Test the complete flow on a Jira Cloud site after installation: connect, start, pause, resume, stop, and confirm entries in Timelogger.
+`npm run build` builds the Custom UI into `static/dist`. `npx forge lint` validates the manifest and resolver. Test the complete flow on a Jira Cloud site after installation: connect, start, pause, resume, stop, and confirm entries in Timelogger.

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { getContext, invoke } from '@forge/bridge';
+import { invoke, view } from '@forge/bridge';
 import {
   Alert, Box, Button, Card, CardContent, CircularProgress, Divider,
   Stack, TextField, Typography,
@@ -16,6 +16,11 @@ type Entry = {
   last_resumed_at: string | null;
   elapsed_seconds: number;
 };
+
+async function call<T extends object>(key: string, payload?: Record<string, unknown>): Promise<T> {
+  const result = await invoke<T>(key, payload);
+  return 'body' in result ? result.body : result;
+}
 
 function duration(seconds: number) {
   const value = Math.max(0, Math.floor(seconds));
@@ -41,8 +46,8 @@ function App() {
 
   async function refresh() {
     const [timer, history] = await Promise.all([
-      invoke<{ entry: Entry | null }>('timer'),
-      invoke<{ entries: Entry[] }>('entries'),
+      call<{ entry: Entry | null }>('timer'),
+      call<{ entries: Entry[] }>('entries'),
     ]);
     setEntry(timer.entry);
     setEntries(history.entries);
@@ -57,11 +62,11 @@ function App() {
   }, [connected]);
 
   useEffect(() => {
-    getContext().then((context) => {
+    view.getContext().then((context) => {
       const extension = context.extension as { issue?: { key?: string }; issueKey?: string } | undefined;
       setIssueKey(extension?.issue?.key ?? extension?.issueKey ?? '');
     }).catch(() => setError('Could not read the Jira issue'));
-    invoke<{ connected: boolean }>('connection').then(async (result) => {
+    call<{ connected: boolean }>('connection').then(async (result) => {
       setConnected(result.connected);
       if (result.connected) await refresh();
     }).catch((cause) => { setConnected(false); setError(message(cause)); });
@@ -107,7 +112,7 @@ function App() {
               <Button color="error" variant="outlined" disabled={busy} onClick={() => run(async () => { await invoke('timerAction', { action: 'stop' }); await refresh(); })}>Stop</Button>
             </Stack>
           </> : <>
-            <TextField label="Description" value={description} onChange={(event) => setDescription(event.target.value)} inputProps={{ maxLength: 500 }} fullWidth />
+            <TextField label="Description" value={description} onChange={(event) => setDescription(event.target.value)} slotProps={{ htmlInput: { maxLength: 500 } }} fullWidth />
             <Button variant="contained" disabled={busy || !issueKey} onClick={() => run(async () => {
               await invoke('timerAction', { action: 'start', project, task: issueKey, description });
               await refresh();
