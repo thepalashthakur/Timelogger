@@ -48,6 +48,10 @@ Status reflects code in this repository. The web app and Jira Forge app are depl
 
 Release versioning: new feature releases increase the minor version by `0.1` (for example, `0.2.0` to `0.3.0`). Dashboard bug fixes increase the patch by `0.0.1` (for example, `0.3.0` to `0.3.1`).
 
+### v0.3.1 — dashboard build fix
+
+The Next.js TypeScript project now checks only web app source and generated Next.js types. The Forge frontend keeps its own TypeScript config and dependencies, so Vercel can build the web app without installing Forge packages.
+
 ## v1 — custom time entry properties
 
 | Feature | Status |
