@@ -22,7 +22,7 @@ type ApiTokenRecord = {
 type View = 'dashboard' | 'entries' | 'settings';
 type StatusFilter = 'all' | TimeEntry['status'];
 const pageSize = 20;
-const hourHeight = 58;
+const defaultHourHeight = 58;
 
 function duration(seconds: number) {
   const whole = Math.max(0, Math.floor(seconds));
@@ -60,6 +60,8 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   const [entry, setEntry] = useState<TimeEntry | null>(null);
   const [timelineMode, setTimelineMode] = useState<'week' | 'day'>('week');
   const [timelineAnchor, setTimelineAnchor] = useState(() => new Date());
+  const [hourHeight, setHourHeight] = useState(defaultHourHeight);
+  const [timelineExpanded, setTimelineExpanded] = useState(false);
   const [timelineEntries, setTimelineEntries] = useState<TimeEntry[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineError, setTimelineError] = useState('');
@@ -239,6 +241,15 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     window.location.hash = next;
   }
 
+  function changeZoom(step: number) {
+    const next = Math.max(29, Math.min(116, hourHeight + step));
+    const scrollTop = timelineScrollRef.current?.scrollTop ?? 0;
+    setHourHeight(next);
+    window.requestAnimationFrame(() => {
+      if (timelineScrollRef.current) timelineScrollRef.current.scrollTop = scrollTop * next / hourHeight;
+    });
+  }
+
   function clearFilters() {
     setSearchInput(''); setSearch(''); setProjectFilter(''); setStatusFilter('all');
     setFromDate(''); setToDate(''); setPage(1);
@@ -402,14 +413,19 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
               <Button aria-label="Previous period" onClick={() => setTimelineAnchor(addDays(timelineAnchor, timelineMode === 'week' ? -7 : -1))}>‹</Button>
               <Button onClick={() => setTimelineAnchor(new Date())}>Today</Button>
               <Button aria-label="Next period" onClick={() => setTimelineAnchor(addDays(timelineAnchor, timelineMode === 'week' ? 7 : 1))}>›</Button>
+              <TextField label="Go to date" type="date" size="small" value={dateTimeLocal(timelineAnchor).slice(0, 10)} onChange={(event) => { if (event.target.value) setTimelineAnchor(new Date(`${event.target.value}T12:00:00`)); }} slotProps={{ inputLabel: { shrink: true } }} sx={{ width: 170 }} />
               <ToggleButtonGroup size="small" exclusive value={timelineMode} onChange={(_event, value: 'week' | 'day' | null) => { if (value) setTimelineMode(value); }} aria-label="Timeline view"><ToggleButton value="week">Week</ToggleButton><ToggleButton value="day">Day</ToggleButton></ToggleButtonGroup>
+              <Tooltip title="Zoom out"><span><Button aria-label="Zoom out" disabled={hourHeight <= 29} onClick={() => changeZoom(-14)}>−</Button></span></Tooltip>
+              <Typography variant="body2" sx={{ minWidth: 42, textAlign: 'center' }}>{Math.round(hourHeight / defaultHourHeight * 100)}%</Typography>
+              <Tooltip title="Zoom in"><span><Button aria-label="Zoom in" disabled={hourHeight >= 116} onClick={() => changeZoom(14)}>+</Button></span></Tooltip>
+              <Button onClick={() => setTimelineExpanded(!timelineExpanded)}>{timelineExpanded ? 'Collapse' : 'Expand'}</Button>
             </Stack>
           </Stack>
           <Divider />
           {timelineError && <Alert severity="error" sx={{ m: 2 }} action={<Button color="inherit" size="small" onClick={() => void loadTimeline()}>Retry</Button>}>{timelineError}</Alert>}
           {timelineTruncated && <Alert severity="warning" sx={{ m: 2 }}>This period has more than 500 entries. Use the Time entries view to find the rest.</Alert>}
           {timelineLoading && <Box sx={{ display: 'grid', placeItems: 'center', py: 1 }}><CircularProgress size={24} aria-label="Loading timeline" /></Box>}
-          <Box ref={timelineScrollRef} sx={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 720 }}>
+          <Box ref={timelineScrollRef} sx={{ overflowX: 'auto', overflowY: 'auto', maxHeight: timelineExpanded ? 'none' : 720 }}>
             <Box sx={{ display: 'grid', gridTemplateColumns: `72px repeat(${timelineDays.length}, minmax(${timelineMode === 'week' ? 130 : 360}px, 1fr))`, minWidth: timelineMode === 'week' ? 980 : 440 }}>
               <Box sx={{ borderRight: 1, borderBottom: 1, borderColor: 'divider', bgcolor: 'background.paper', position: 'sticky', top: 0, zIndex: 3 }} />
               {timelineDays.map((day) => <Box key={day.toISOString()} sx={{ p: 1, textAlign: 'center', borderRight: 1, borderBottom: 1, borderColor: 'divider', bgcolor: day.toDateString() === new Date(now).toDateString() ? 'rgba(25,118,210,0.08)' : 'background.paper', position: 'sticky', top: 0, zIndex: 2 }}><Typography variant="body2" sx={{ fontWeight: 700 }}>{day.toLocaleDateString(undefined, { weekday: 'short' })} {day.getDate()}</Typography></Box>)}

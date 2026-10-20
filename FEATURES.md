@@ -68,6 +68,10 @@ Changing a completed entry's time range recalculates its tracked duration; chang
 
 Edit and Delete are visible beside each entry in the web list and in timeline entry details. Running and paused entries support metadata edits; their start and end times stay under timer controls. Deleting an active entry removes its timer after confirmation.
 
+### v0.4.2 — timeline navigation and zoom
+
+The dashboard timeline has a date picker, zoom in and zoom out controls, and an Expand action that shows the full day height without the timeline's usual scroll limit.
+
 ## v1 — custom time entry properties
 
 | Feature | Status |
