@@ -389,6 +389,16 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     finally { setBusy(false); }
   }
 
+  async function importCatalog() {
+    setBusy(true); setError('');
+    try {
+      const result = await request('/api/catalog/import', { method: 'POST' });
+      await loadCatalog();
+      setNotice(`Imported ${result.projects_created} projects and ${result.tasks_created} tasks from existing entries`);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not import existing entries'); }
+    finally { setBusy(false); }
+  }
+
   async function createToken(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setError(''); setNewToken('');
     try {
@@ -613,7 +623,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
         </Stack></Paper>
       </Stack></Box>}
       {view === 'catalog' && <Box role="tabpanel" id="panel-catalog" aria-labelledby="tab-catalog"><Stack spacing={3}>
-        <Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Projects, tasks & tags</Typography><Typography color="text.secondary">Projects group work. Each task belongs to one project. Tags can be used across projects.</Typography></Box>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}><Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Projects, tasks & tags</Typography><Typography color="text.secondary">Projects group work. Each task belongs to one project. Tags can be used across projects.</Typography></Box><Button variant="outlined" onClick={() => void importCatalog()} disabled={busy || !catalogReady}>Import from existing entries</Button></Stack>
         <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}><Stack spacing={2}><Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}><Typography variant="h6">Projects</Typography><Button variant="contained" onClick={() => openCatalog('project')}>New project</Button></Stack>
           {!projects.length && <Typography color="text.secondary">No projects yet.</Typography>}
           {projects.map((item) => <Stack key={item.id} direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between', borderTop: 1, borderColor: 'divider', pt: 1 }}><Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><Box sx={{ width: 16, height: 16, borderRadius: 1, bgcolor: item.color }} /><Typography sx={{ fontWeight: 600 }}>{item.name}</Typography><Typography variant="body2" color="text.secondary">{item.key}</Typography>{item.archived && <Chip size="small" label="Archived" />}</Stack><Stack direction="row" spacing={1}><Button size="small" onClick={() => openCatalog('project', 'catalog', item)}>Edit</Button><Button size="small" onClick={() => void changeCatalogState('project', item.id, item.archived)} disabled={busy}>{item.archived ? 'Restore' : 'Archive'}</Button></Stack></Stack>)}

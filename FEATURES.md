@@ -81,6 +81,7 @@ The dashboard timeline has a date picker, zoom in and zoom out controls, and an 
 | Reusable tags with names and colors, assignable to multiple time entries | Implemented |
 | Create categories from the dashboard or entry forms and manage them in a dedicated view | Implemented |
 | Filter entry history by task and tag | Implemented |
+| Import project and task keys from existing entries into managed records | Implemented |
 | Jira issue key and project key automatically create matching catalog items on timer start | Implemented |
 | Choose Timelogger tags when starting an issue timer in Forge | Implemented |
 | Additive `timelogger_` catalog migration without changing existing tables or data | Implemented in `supabase/catalog.sql`; deployment requires applying it |

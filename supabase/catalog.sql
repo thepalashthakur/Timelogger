@@ -71,4 +71,29 @@ $$;
 revoke all on function public.timelogger_set_entry_tags(uuid,uuid,uuid[]) from public, anon, authenticated;
 grant execute on function public.timelogger_set_entry_tags(uuid,uuid,uuid[]) to service_role;
 
+create function public.timelogger_import_catalog(p_user_id uuid)
+returns jsonb language plpgsql security invoker set search_path = ''
+as $$
+declare projects_created integer; tasks_created integer;
+begin
+  if current_user <> 'service_role' then raise exception 'Unauthorized'; end if;
+  insert into public.timelogger_projects(user_id, key, name)
+    select distinct p_user_id, project, project
+    from public.timelogger_time_entries
+    where user_id = p_user_id and project <> '' and length(project) <= 100
+    on conflict (user_id, key) do nothing;
+  get diagnostics projects_created = row_count;
+  insert into public.timelogger_tasks(user_id, project_id, key, name)
+    select distinct p_user_id, project_record.id, entry.task, entry.task
+    from public.timelogger_time_entries entry
+    join public.timelogger_projects project_record on project_record.user_id = p_user_id and project_record.key = entry.project
+    where entry.user_id = p_user_id and entry.task <> '' and length(entry.task) <= 100
+    on conflict (project_id, key) do nothing;
+  get diagnostics tasks_created = row_count;
+  return jsonb_build_object('projects_created', projects_created, 'tasks_created', tasks_created);
+end;
+$$;
+revoke all on function public.timelogger_import_catalog(uuid) from public, anon, authenticated;
+grant execute on function public.timelogger_import_catalog(uuid) to service_role;
+
 commit;

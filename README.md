@@ -33,6 +33,7 @@ data is restricted to that user. Personal tokens cannot create or revoke tokens.
 | `GET` | `/api/timeline?from=<ISO>&to=<ISO>` | Entries overlapping a period of up to 32 days; returns `entries`, `count`, and `truncated` (500 entry limit) |
 | `GET` | `/api/catalog` | Managed projects, tasks, and tags for the authenticated user |
 | `POST` | `/api/catalog` | Create `{ "kind": "project" | "task" | "tag", "name": "...", ... }` |
+| `POST` | `/api/catalog/import` | Add managed projects and tasks from the user's existing entries without changing those entries |
 | `PATCH` | `/api/catalog/{projects|tasks|tags}/{id}` | Rename or change color; archive/restore projects and tasks |
 | `DELETE` | `/api/catalog/{projects|tasks|tags}/{id}` | Archive a project/task or permanently delete a tag |
 | `GET` | `/api/entry-tags?ids=<comma-separated-entry-ids>` | Tag IDs assigned to the requested entries |
