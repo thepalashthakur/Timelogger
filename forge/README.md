@@ -19,14 +19,15 @@ npm install
 npm --prefix static install
 npm run build
 npx forge login
-export TIMELOGGER_API_ORIGIN=https://your-timelogger-domain.example
 npx forge register
-npx forge variables set TIMELOGGER_API_ORIGIN "$TIMELOGGER_API_ORIGIN"
+npx forge variables set TIMELOGGER_API_ORIGIN https://timelogger-gilt.vercel.app
 npx forge deploy
-npx forge install --site your-site.atlassian.net --product Jira
+npx forge install --site projects-1.atlassian.net --product Jira
 ```
 
-Set `TIMELOGGER_API_ORIGIN` to the exact HTTPS origin, without a path or trailing slash. Forge uses the shell variable to expand the manifest egress permission and its runtime variable for API requests. `forge register` replaces the placeholder `app.id` in `manifest.yml`. The Jira site administrator must approve the requested storage and outbound fetch permissions. After changing the origin, rebuild and redeploy; reinstall or upgrade the app if Forge asks for permission approval.
+The manifest allows outbound requests to the deployed Timelogger origin. The runtime variable tells the resolver where to send them. `forge register` replaces the placeholder `app.id` in `manifest.yml`. The Jira site administrator must approve the requested storage and outbound fetch permissions. After changing the origin, update both the manifest and runtime variable, then redeploy; reinstall or upgrade the app if Forge asks for permission approval.
+
+The `FORGE_TOKEN` value in the repository's `.env` is an Atlassian CLI token. The CLI does not automatically load `.env`; run `npx forge login` and enter your Atlassian email and token, or export them as `FORGE_EMAIL` and `FORGE_API_TOKEN` before running commands. The Timelogger personal token is a separate token created in Timelogger Settings and pasted into the Jira issue panel.
 
 In Timelogger, sign in and create a token under Settings. Open a Jira issue, expand the Timelogger panel, and connect the token. Tokens expire after 90 days or when revoked in Timelogger; reconnect with a new token when needed. Disconnect deletes the Forge secret for that Jira account.
 

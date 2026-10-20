@@ -21,10 +21,7 @@ permissions:
   external:
     fetch:
       backend:
-        - address: ${TIMELOGGER_API_ORIGIN}
+        - address: https://timelogger-gilt.vercel.app
   content:
     styles:
       - unsafe-inline
-environment:
-  variables:
-    - TIMELOGGER_API_ORIGIN
