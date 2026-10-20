@@ -8,7 +8,7 @@ modules:
       icon: resource:main;icons/timelogger.svg
   function:
     - key: resolver
-      handler: src/index.handler
+      handler: index.handler
 resources:
   - key: main
     path: static/dist
