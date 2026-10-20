@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto';
 import { fetch } from '@forge/api';
 import { kvs } from '@forge/kvs';
-import Resolver from '@forge/resolver';
+import { makeResolver } from '@forge/resolver';
 
-const resolver = new Resolver();
 const tokenPattern = /^tl_[A-Za-z0-9_-]{43}$/;
 const actions = new Set(['start', 'pause', 'resume', 'stop']);
 
@@ -48,38 +47,38 @@ async function storedToken(context) {
   return token;
 }
 
-resolver.define('connection', async ({ context }) => ({ connected: Boolean(await kvs.getSecret(userKey(context))) }));
+export const handler = makeResolver({
+  connection: async ({ context }) => ({ connected: Boolean(await kvs.getSecret(userKey(context))) }),
 
-resolver.define('connect', async ({ context, payload }) => {
-  const token = typeof payload?.token === 'string' ? payload.token.trim() : '';
-  if (!tokenPattern.test(token)) throw new Error('Enter a valid Timelogger API token');
-  await request('/api/timer', token);
-  await kvs.setSecret(userKey(context), token);
-  return { connected: true };
-});
+  connect: async ({ context, payload }) => {
+    const token = typeof payload?.token === 'string' ? payload.token.trim() : '';
+    if (!tokenPattern.test(token)) throw new Error('Enter a valid Timelogger API token');
+    await request('/api/timer', token);
+    await kvs.setSecret(userKey(context), token);
+    return { connected: true };
+  },
 
-resolver.define('disconnect', async ({ context }) => {
-  await kvs.deleteSecret(userKey(context));
-  return { connected: false };
-});
+  disconnect: async ({ context }) => {
+    await kvs.deleteSecret(userKey(context));
+    return { connected: false };
+  },
 
-resolver.define('timer', async ({ context }) => request('/api/timer', await storedToken(context)));
+  timer: async ({ context }) => request('/api/timer', await storedToken(context)),
 
-resolver.define('entries', async ({ context }) => request('/api/entries', await storedToken(context)));
+  entries: async ({ context }) => request('/api/entries', await storedToken(context)),
 
-resolver.define('timerAction', async ({ context, payload }) => {
-  const action = payload?.action;
-  if (!actions.has(action)) throw new Error('Invalid timer action');
-  const body = { action };
-  if (action === 'start') {
-    for (const field of ['project', 'task', 'description']) {
-      if (typeof payload?.[field] !== 'string' || payload[field].length > 500) {
-        throw new Error(`Invalid ${field}`);
+  timerAction: async ({ context, payload }) => {
+    const action = payload?.action;
+    if (!actions.has(action)) throw new Error('Invalid timer action');
+    const body = { action };
+    if (action === 'start') {
+      for (const field of ['project', 'task', 'description']) {
+        if (typeof payload?.[field] !== 'string' || payload[field].length > 500) {
+          throw new Error(`Invalid ${field}`);
+        }
+        body[field] = payload[field].trim();
       }
-      body[field] = payload[field].trim();
     }
-  }
-  return request('/api/timer', await storedToken(context), 'POST', body);
+    return request('/api/timer', await storedToken(context), 'POST', body);
+  },
 });
-
-export const handler = resolver.getDefinitions();
