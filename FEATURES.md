@@ -52,6 +52,18 @@ Release versioning: new feature releases increase the minor version by `0.1` (fo
 
 The Next.js TypeScript project now checks only web app source and generated Next.js types. The Forge frontend keeps its own TypeScript config and dependencies, so Vercel can build the web app without installing Forge packages.
 
+## v0.4 — time entry CRUD
+
+| Feature | Status |
+| --- | --- |
+| Create completed entries from Dashboard and Time entries | Implemented |
+| Read entries through the timeline and searchable history | Implemented |
+| Edit project, task, description, start, and end for completed entries | Implemented |
+| Delete completed entries with confirmation | Implemented |
+| Authenticated, user-scoped update and delete API | Implemented |
+
+Running and paused timers remain under the timer actions. Stop a timer before editing or deleting its entry. Changing a completed entry's time range recalculates its tracked duration; changing only its text keeps the stored duration. No database migration is required.
+
 ## v1 — custom time entry properties
 
 | Feature | Status |
