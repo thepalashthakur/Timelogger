@@ -120,6 +120,8 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   const [newToken, setNewToken] = useState('');
   const [calendarUrl, setCalendarUrl] = useState('');
   const [savedCalendarUrl, setSavedCalendarUrl] = useState('');
+  const [calendarSecret, setCalendarSecret] = useState('');
+  const [calendarHasSecret, setCalendarHasSecret] = useState(false);
   const [calendarError, setCalendarError] = useState('');
   const [calendarPending, setCalendarPending] = useState<CalendarSyncRecord[]>([]);
   const [manualStart, setManualStart] = useState(() => dateTimeLocal(new Date(Date.now() - 3600000)));
@@ -264,6 +266,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
       const data = await request('/api/calendar/settings');
       const url = data.integration?.script_url ?? '';
       setCalendarUrl(url); setSavedCalendarUrl(url); setCalendarError('');
+      setCalendarHasSecret(Boolean(data.has_secret));
     } catch (caught) { setCalendarError(caught instanceof Error ? caught.message : 'Could not load Calendar settings'); }
   }, [request, session]);
 
@@ -276,7 +279,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   }, [request, session]);
 
   useEffect(() => {
-    if (!session) { setEntry(null); setEntries([]); setTimelineEntries([]); setProjects([]); setTasks([]); setTags([]); setCatalogReady(false); setEntryTagIds({}); setApiTokens([]); setNewToken(''); setCalendarUrl(''); setSavedCalendarUrl(''); setCalendarError(''); setCalendarPending([]); entryRequestId.current += 1; timelineRequestId.current += 1; return; }
+    if (!session) { setEntry(null); setEntries([]); setTimelineEntries([]); setProjects([]); setTasks([]); setTags([]); setCatalogReady(false); setEntryTagIds({}); setApiTokens([]); setNewToken(''); setCalendarUrl(''); setSavedCalendarUrl(''); setCalendarSecret(''); setCalendarHasSecret(false); setCalendarError(''); setCalendarPending([]); entryRequestId.current += 1; timelineRequestId.current += 1; return; }
     void refreshTimer();
     void refreshTokens();
     void refreshCalendarSettings();
@@ -447,10 +450,12 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   async function saveCalendarSettings(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setCalendarError(''); setNotice('');
     try {
-      const data = await request('/api/calendar/settings', { method: 'PUT', body: JSON.stringify({ script_url: calendarUrl }) });
+      const data = await request('/api/calendar/settings', { method: 'PUT', body: JSON.stringify({ script_url: calendarUrl, ...(calendarSecret ? { webhook_secret: calendarSecret } : {}) }) });
       setCalendarUrl(data.integration.script_url);
       setSavedCalendarUrl(data.integration.script_url);
-      setNotice('Google Calendar deployment URL saved');
+      setCalendarSecret('');
+      setCalendarHasSecret(Boolean(data.has_secret));
+      setNotice('Google Calendar connection saved');
     } catch (caught) { setCalendarError(caught instanceof Error ? caught.message : 'Could not save Calendar URL'); }
     finally { setBusy(false); }
   }
@@ -459,7 +464,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     setBusy(true); setCalendarError(''); setNotice('');
     try {
       await request('/api/calendar/settings', { method: 'DELETE' });
-      setCalendarUrl(''); setSavedCalendarUrl('');
+      setCalendarUrl(''); setSavedCalendarUrl(''); setCalendarSecret(''); setCalendarHasSecret(false);
       setNotice('Google Calendar disconnected');
     } catch (caught) { setCalendarError(caught instanceof Error ? caught.message : 'Could not disconnect Calendar'); }
     finally { setBusy(false); }
@@ -705,13 +710,14 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
       <Paper variant="outlined" sx={{ borderRadius: 3, p: 3 }}><Stack spacing={2}>
         <Box><Typography variant="h6" sx={{ fontWeight: 700 }}>Google Calendar</Typography><Typography color="text.secondary">Deploy the Apps Script in your own Google account, then save its Web app URL here. Completed time entries will sync to your calendar.</Typography></Box>
         <Accordion variant="outlined"><AccordionSummary><Typography>Apps Script code and setup steps</Typography></AccordionSummary><AccordionDetails><Stack spacing={2}>
-          <Typography variant="body2">Create a new project at script.google.com, replace its code with the script below, then choose Deploy → New deployment → Web app. Set Execute as to Me and access to Anyone. Authorize Calendar access, copy the /exec URL, and save it below. Keep that URL private.</Typography>
+          <Typography variant="body2">Create a project at script.google.com or update your existing Clockify script with the code below. In Project Settings → Script properties, set CALENDAR_ID and WEBHOOK_SECRET. Deploy a new Web app version with Execute as Me and access Anyone, authorize Calendar access, then save the /exec URL and the same secret below. Keep both private.</Typography>
           <Button variant="outlined" onClick={() => void navigator.clipboard.writeText(calendarScript)}>Copy script</Button>
           <TextField label="Apps Script code" value={calendarScript} multiline minRows={8} maxRows={18} fullWidth slotProps={{ htmlInput: { readOnly: true } }} />
         </Stack></AccordionDetails></Accordion>
         <Box component="form" onSubmit={saveCalendarSettings}><Stack spacing={2}>
           <TextField label="Apps Script Web app URL" type="url" value={calendarUrl} onChange={(event) => setCalendarUrl(event.target.value)} placeholder="https://script.google.com/macros/s/.../exec" helperText="Use the deployed /exec URL, not the /dev test URL." required fullWidth slotProps={{ htmlInput: { maxLength: 2048 } }} />
-          <Stack direction="row" spacing={1}><Button type="submit" variant="contained" disabled={busy || !calendarUrl.trim() || calendarUrl === savedCalendarUrl}>Save URL</Button>{savedCalendarUrl && <Button color="error" onClick={() => void disconnectCalendar()} disabled={busy}>Disconnect</Button>}</Stack>
+          <TextField label="WEBHOOK_SECRET" type="password" value={calendarSecret} onChange={(event) => setCalendarSecret(event.target.value)} helperText={calendarHasSecret ? 'A secret is saved. Leave blank to keep it, or enter a replacement.' : 'Enter the exact WEBHOOK_SECRET in your Apps Script properties.'} required={!calendarHasSecret} fullWidth autoComplete="off" slotProps={{ htmlInput: { maxLength: 512 } }} />
+          <Stack direction="row" spacing={1}><Button type="submit" variant="contained" disabled={busy || !calendarUrl.trim() || (!calendarHasSecret && !calendarSecret.trim()) || (calendarUrl === savedCalendarUrl && !calendarSecret)}>Save connection</Button>{savedCalendarUrl && <Button color="error" onClick={() => void disconnectCalendar()} disabled={busy}>Disconnect</Button>}</Stack>
         </Stack></Box>
         {calendarError && <Alert severity="error">{calendarError}</Alert>}
         {savedCalendarUrl && <Alert severity="success">Calendar connection configured for this account.</Alert>}

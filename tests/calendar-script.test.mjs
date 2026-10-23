@@ -9,22 +9,22 @@ const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.Modu
 const moduleContext = { exports: {} };
 vm.runInNewContext(compiled, moduleContext);
 const script = moduleContext.exports.calendarScript;
+const protocolSource = readFileSync(new URL('../src/lib/calendar-protocol.ts', import.meta.url), 'utf8');
+const protocolContext = { exports: {} };
+vm.runInNewContext(ts.transpileModule(protocolSource, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, protocolContext);
+const { calendarRequest } = protocolContext.exports;
 
 function bridge() {
   const events = new Map();
-  const properties = new Map();
+  const properties = new Map([['CALENDAR_ID', 'user-calendar'], ['WEBHOOK_SECRET', 'long-secret-value-for-test']]);
   let nextId = 1;
   const calendar = {
     getEventById: (id) => events.get(id) ?? null,
-    getEvents: () => [...events.values()],
     createEvent(title, start, end, options) {
       const id = `event-${nextId++}`;
-      const tags = new Map();
       const event = {
         id, title, start, end, description: options.description,
         getId: () => id,
-        getTag: (key) => tags.get(key) ?? null,
-        setTag: (key, value) => tags.set(key, value),
         setTitle(value) { this.title = value; },
         setTime(first, last) { this.start = first; this.end = last; },
         setDescription(value) { this.description = value; },
@@ -35,7 +35,7 @@ function bridge() {
     },
   };
   const context = {
-    CalendarApp: { getDefaultCalendar: () => calendar },
+    CalendarApp: { getCalendarById: (id) => id === 'user-calendar' ? calendar : null },
     ContentService: { MimeType: { JSON: 'application/json' }, createTextOutput: (content) => ({ content, setMimeType() { return this; } }) },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
     PropertiesService: { getScriptProperties: () => ({
@@ -49,29 +49,44 @@ function bridge() {
   return { events, properties, post };
 }
 
-test('Apps Script creates once, updates the same event, and deletes it', () => {
+const event = { title: 'COURSES — COURSES-7', start: '2026-10-24T09:00:00Z', end: '2026-10-24T10:00:00Z', description: 'Review task' };
+
+test('the existing Clockify upsert request remains supported', () => {
+  const app = bridge();
+  const request = { secret: 'long-secret-value-for-test', source: 'clockify', action: 'upsert', idempotencyKey: 'clockify-123', event };
+  const first = app.post(request);
+  assert.equal(first.ok, true);
+  assert.equal(app.post(request).eventId, first.eventId);
+  assert.equal(app.events.size, 1);
+});
+
+test('Timelogger creates, updates, and deletes one Calendar event', () => {
   const app = bridge();
   const entryId = 'b3594b5f-a335-4da2-9e73-6ca9c86e7f11';
   const entry = {
-    project: 'COURSES', task: 'COURSES-7', description: 'Review task',
-    start_at: '2026-10-24T09:00:00Z', end_at: '2026-10-24T10:00:00Z',
+    entry_id: entryId, project: 'COURSES', task: 'COURSES-7', description: 'Review task',
+    start_at: event.start, end_at: event.end,
   };
-  const first = app.post({ action: 'upsert', entry_id: entryId, entry });
+  const request = calendarRequest('long-secret-value-for-test', 'upsert', entryId, null, entry);
+  const first = app.post(request);
   assert.equal(first.ok, true);
   assert.equal(app.events.size, 1);
-  assert.equal(app.events.get(first.event_id).title, 'COURSES — COURSES-7');
+  assert.equal(app.post(request).eventId, first.eventId);
 
-  const retry = app.post({ action: 'upsert', entry_id: entryId, entry });
-  assert.equal(retry.event_id, first.event_id);
-  assert.equal(app.events.size, 1);
+  const changed = app.post(calendarRequest('long-secret-value-for-test', 'upsert', entryId, first.eventId,
+    { ...entry, description: 'Updated', end_at: '2026-10-24T11:00:00Z' }));
+  assert.equal(changed.eventId, first.eventId);
+  assert.equal(app.events.get(first.eventId).end.toISOString(), '2026-10-24T11:00:00.000Z');
+  assert.match(app.events.get(first.eventId).description, /Updated/);
 
-  const changed = app.post({ action: 'upsert', entry_id: entryId, event_id: first.event_id,
-    entry: { ...entry, description: 'Updated', end_at: '2026-10-24T11:00:00Z' } });
-  assert.equal(changed.event_id, first.event_id);
-  assert.equal(app.events.get(first.event_id).end.toISOString(), '2026-10-24T11:00:00.000Z');
-  assert.match(app.events.get(first.event_id).description, /Updated/);
-
-  assert.equal(app.post({ action: 'delete', entry_id: entryId, event_id: first.event_id }).ok, true);
+  const deletion = calendarRequest('long-secret-value-for-test', 'delete', entryId, first.eventId, null);
+  assert.equal(app.post(deletion).ok, true);
   assert.equal(app.events.size, 0);
-  assert.equal(app.post({ action: 'delete', entry_id: entryId, event_id: first.event_id }).ok, true);
+  assert.equal(app.post(deletion).ok, true);
+});
+
+test('an incorrect webhook secret cannot change the calendar', () => {
+  const app = bridge();
+  assert.equal(app.post({ secret: 'wrong', source: 'timelogger', action: 'upsert', idempotencyKey: 'timelogger:test', event }).error, 'Unauthorized');
+  assert.equal(app.events.size, 0);
 });

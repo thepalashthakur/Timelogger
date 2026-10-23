@@ -17,10 +17,14 @@ function deploymentUrl(value: unknown) {
 export async function GET(req: NextRequest) {
   const auth = await authenticatedUser(req);
   if (!auth) return unauthorized();
-  const { data, error } = await adminClient().from('timelogger_calendar_integrations')
-    .select('script_url,updated_at').eq('user_id', auth.userId).maybeSingle();
+  const client = adminClient();
+  const [integration, secret] = await Promise.all([
+    client.from('timelogger_calendar_integrations').select('script_url,updated_at').eq('user_id', auth.userId).maybeSingle(),
+    client.from('timelogger_calendar_webhook_secrets').select('user_id').eq('user_id', auth.userId).maybeSingle(),
+  ]);
+  const error = integration.error ?? secret.error;
   return error ? NextResponse.json({ error: error.message }, { status: 500 })
-    : NextResponse.json({ integration: data });
+    : NextResponse.json({ integration: integration.data, has_secret: Boolean(secret.data) });
 }
 
 export async function PUT(req: NextRequest) {
@@ -28,20 +32,41 @@ export async function PUT(req: NextRequest) {
   if (!auth) return unauthorized();
   let body: unknown;
   try { body = await req.json(); } catch { return badRequest('Invalid JSON'); }
-  const url = deploymentUrl((body as Record<string, unknown> | null)?.script_url);
+  const input = body as Record<string, unknown> | null;
+  const url = deploymentUrl(input?.script_url);
   if (!url) return badRequest('Enter an HTTPS Google Apps Script deployment URL ending in /exec');
-  const { data, error } = await adminClient().from('timelogger_calendar_integrations')
+  const providedSecret = input?.webhook_secret;
+  if (providedSecret !== undefined && (typeof providedSecret !== 'string' || providedSecret.length > 512)) {
+    return badRequest('Invalid webhook secret');
+  }
+  const client = adminClient();
+  const { data: existingSecret, error: readError } = await client.from('timelogger_calendar_webhook_secrets')
+    .select('user_id').eq('user_id', auth.userId).maybeSingle();
+  if (readError) return NextResponse.json({ error: readError.message }, { status: 500 });
+  if (!existingSecret && (!providedSecret || !providedSecret.trim())) return badRequest('Enter the WEBHOOK_SECRET from your Apps Script properties');
+  if (providedSecret) {
+    if (!providedSecret.trim()) return badRequest('Webhook secret cannot be blank');
+    const { error: secretError } = await client.from('timelogger_calendar_webhook_secrets').upsert({
+      user_id: auth.userId, webhook_secret: providedSecret, updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id' });
+    if (secretError) return NextResponse.json({ error: secretError.message }, { status: 500 });
+  }
+  const { data, error } = await client.from('timelogger_calendar_integrations')
     .upsert({ user_id: auth.userId, script_url: url, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
     .select('script_url,updated_at').single();
   return error ? NextResponse.json({ error: error.message }, { status: 500 })
-    : NextResponse.json({ integration: data });
+    : NextResponse.json({ integration: data, has_secret: true });
 }
 
 export async function DELETE(req: NextRequest) {
   const auth = await authenticatedUser(req);
   if (!auth) return unauthorized();
-  const { error } = await adminClient().from('timelogger_calendar_integrations')
+  const client = adminClient();
+  const { error } = await client.from('timelogger_calendar_integrations')
     .delete().eq('user_id', auth.userId);
-  return error ? NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  const { error: secretError } = await client.from('timelogger_calendar_webhook_secrets')
+    .delete().eq('user_id', auth.userId);
+  return secretError ? NextResponse.json({ error: secretError.message }, { status: 500 })
     : NextResponse.json({ disconnected: true });
 }

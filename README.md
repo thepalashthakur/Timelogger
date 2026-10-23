@@ -6,7 +6,7 @@ A Vercel ready Next.js time tracker using Supabase Auth, Supabase Postgres, and 
 
 These steps use the existing Supabase project and the Vercel project connected to this repository. The Jira issue panel is a separate Forge deployment described below.
 
-1. **Apply the database migrations.** In the Supabase SQL Editor, review and run `supabase/schema.sql`, then `supabase/api_tokens.sql`, then `supabase/catalog.sql`, then `supabase/calendar_sync.sql` for a new Timelogger installation. For an existing installation, apply only migrations that have not yet been run; v0.6 needs `supabase/calendar_sync.sql`. The migrations create only `timelogger_` objects and do not alter existing tables or data. Do not rerun a migration that has already been applied.
+1. **Apply the database migrations.** In the Supabase SQL Editor, review and run `supabase/schema.sql`, then `supabase/api_tokens.sql`, then `supabase/catalog.sql`, then `supabase/calendar_sync.sql`, then `supabase/calendar_webhook.sql` for a new Timelogger installation. For an existing installation, apply only migrations that have not yet been run; v0.6 needs the two Calendar migrations. The migrations create only `timelogger_` objects and do not alter existing tables or data. Do not rerun a migration that has already been applied.
 2. **Configure Supabase Auth.** Enable email/password sign-in. Set the Auth site URL to your deployed web app URL (currently `https://timelogger-gilt.vercel.app`). If you use email confirmations, configure the allowed redirect URLs for the deployed domain and `http://localhost:3000` for local development.
 3. **Set the Vercel environment variables.** In the Timelogger project's Vercel settings, add `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` to the Production environment. Use the Supabase project URL, its anon/publishable key, and its service role key respectively. The service role key is required for personal API tokens and stays server-side; never put it in browser code or Forge. Add the same values to Preview only if you deploy previews. Redeploy after changing environment variables.
 4. **Check the app locally.** From the repository root, copy `.env.example` to `.env.local`, fill in the three values, then run:
@@ -48,12 +48,13 @@ The Jira Cloud issue panel lives in [`forge/`](forge/README.md). It requires sep
 
 Each user connects their own Google Calendar through a Google Apps Script Web app:
 
-1. In Timelogger **Settings → Google Calendar**, expand **Apps Script code and setup steps** and copy the script.
-2. In the Google account whose default calendar should receive entries, create a project at [Google Apps Script](https://script.google.com/), paste the code into `Code.gs`, and deploy it as a **Web app**. Choose **Execute as: Me** and **Who has access: Anyone** so the Timelogger server can call it. Authorize Calendar access when prompted. Keep the deployment URL private because it grants access to this bridge.
-3. Copy the deployed URL ending in `/exec`, paste it into Timelogger Settings, and click **Save URL**. The URL is stored for that Timelogger user in `public.timelogger_calendar_integrations` and used only by the server.
-4. Create a completed time entry, or stop a timer. Check for the matching Google Calendar event. Editing or deleting that entry updates or deletes its event. If delivery fails, the entry change still succeeds; Settings shows the failed sync with a **Retry** button.
+1. In Timelogger **Settings → Google Calendar**, expand **Apps Script code and setup steps** and copy the script. This version keeps the existing `source: "clockify"`, `action: "upsert"`, `idempotencyKey`, and `event` request format, and adds Timelogger upserts and deletes.
+2. In the Google account whose calendar should receive entries, create a project at [Google Apps Script](https://script.google.com/) or update your existing Clockify script. Paste the code into `Code.gs`. In **Project Settings → Script properties**, set `CALENDAR_ID` to the target Google Calendar ID and `WEBHOOK_SECRET` to a strong random value. If you already use these properties for Clockify, keep their current values.
+3. Deploy a new **Web app** version. Choose **Execute as: Me** and **Who has access: Anyone** so the Timelogger server can call it. Authorize Calendar access when prompted. Keep the deployment URL and secret private.
+4. Copy the deployed URL ending in `/exec`, paste it into Timelogger Settings, enter the same `WEBHOOK_SECRET`, and click **Save connection**. The URL and secret are stored in separate user-scoped `timelogger_` tables. The secret is never returned by the settings API after saving.
+5. Create a completed time entry, or stop a timer. Check for the matching Google Calendar event. Editing or deleting that entry updates or deletes its event. If delivery fails, the entry change still succeeds; Settings shows the failed sync with a **Retry** button.
 
-Running and paused timers are synced when stopped, after their final end time is known. Existing entries are not imported into Calendar automatically. If the Apps Script code changes, publish a new deployment version before testing it. The Calendar integration requires `supabase/calendar_sync.sql` to be applied before deploying this app version.
+Running and paused timers are synced when stopped, after their final end time is known. Existing entries are not imported into Calendar automatically. If the Apps Script code changes, publish a new deployment version before testing it. Apply both Calendar migrations before deploying this app version. The user's old script only supports Clockify upserts; Timelogger sync needs the updated script shown in Settings.
 
 ## Timer API
 
@@ -79,7 +80,7 @@ data is restricted to that user. Personal tokens cannot create or revoke tokens.
 | `DELETE` | `/api/catalog/{projects|tasks|tags}/{id}` | Archive a project/task or permanently delete a tag |
 | `GET` | `/api/entry-tags?ids=<comma-separated-entry-ids>` | Tag IDs assigned to the requested entries |
 | `PUT` | `/api/entry-tags` | Replace an entry's tags with `{ "entry_id": "...", "tag_ids": ["..."] }` |
-| `GET`, `PUT`, `DELETE` | `/api/calendar/settings` | Read, save, or disconnect the signed-in user's Apps Script URL |
+| `GET`, `PUT`, `DELETE` | `/api/calendar/settings` | Read, save, or disconnect the signed-in user's Apps Script URL and shared secret; GET never returns the secret |
 | `GET`, `POST` | `/api/calendar/sync` | Read failed or pending deliveries; retry up to five |
 
 Token management requires a Supabase login session. `GET /api/tokens` lists token

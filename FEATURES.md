@@ -92,12 +92,12 @@ Project and task keys are immutable so existing time entries and Jira issue link
 
 | Feature | Status |
 | --- | --- |
-| Per-user Apps Script deployment URL in Settings | Implemented |
-| Copyable Apps Script for a user's default Google Calendar | Implemented |
+| Per-user Apps Script deployment URL and shared secret in Settings | Implemented |
+| Copyable Apps Script compatible with existing Clockify upserts and a chosen Calendar ID | Implemented |
 | Create Calendar events for manual entries and stopped timers | Implemented |
 | Update and delete Calendar events when completed entries change | Implemented |
 | Persistent delivery status and manual retry for failed sync | Implemented |
-| Additive `timelogger_` Calendar tables without changing existing tables or data | Implemented in `supabase/calendar_sync.sql`; deployment requires applying it |
+| Additive `timelogger_` Calendar tables without changing existing tables or data | Implemented in `supabase/calendar_sync.sql` and `supabase/calendar_webhook.sql`; deployment requires applying both |
 
 Calendar sync begins after a user saves their deployed `/exec` URL. Running and paused timers sync when stopped. The Apps Script stores a Timelogger entry ID to Calendar event ID mapping so repeated requests update the same event.
 

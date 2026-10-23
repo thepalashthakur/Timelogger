@@ -1,15 +1,7 @@
 import 'server-only';
 import { adminClient } from './admin';
 import type { TimeEntry } from './supabase';
-
-type CalendarPayload = {
-  entry_id: string;
-  project: string;
-  task: string;
-  description: string;
-  start_at: string;
-  end_at: string;
-};
+import { calendarRequest, type CalendarPayload } from './calendar-protocol';
 
 type SyncRow = {
   user_id: string;
@@ -27,6 +19,13 @@ async function scriptUrl(userId: string) {
     .select('script_url').eq('user_id', userId).maybeSingle();
   if (error) throw new Error(error.message);
   return data?.script_url as string | undefined;
+}
+
+async function scriptSecret(userId: string) {
+  const { data, error } = await adminClient().from('timelogger_calendar_webhook_secrets')
+    .select('webhook_secret').eq('user_id', userId).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data?.webhook_secret as string | undefined;
 }
 
 async function syncRow(userId: string, entryId: string) {
@@ -79,23 +78,23 @@ export async function queueCalendarDelete(userId: string, entryId: string) {
 }
 
 export async function deliverCalendarSync(userId: string, entryId: string) {
-  const [url, row] = await Promise.all([scriptUrl(userId), syncRow(userId, entryId)]);
-  if (!url || !row || row.status === 'synced') return { status: 'skipped' as const };
+  const [url, secret, row] = await Promise.all([scriptUrl(userId), scriptSecret(userId), syncRow(userId, entryId)]);
+  if (!url || !secret || !row || row.status === 'synced') return { status: 'skipped' as const };
   try {
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: row.desired_action, entry_id: row.entry_id, event_id: row.event_id, entry: row.payload }),
+      body: JSON.stringify(calendarRequest(secret, row.desired_action, row.entry_id, row.event_id, row.payload)),
       signal: AbortSignal.timeout(10000),
       cache: 'no-store',
     });
     const responseText = await response.text();
-    let result: { ok?: boolean; event_id?: string; error?: string };
+    let result: { ok?: boolean; eventId?: string; error?: string };
     try { result = JSON.parse(responseText); }
     catch { throw new Error('Calendar script did not return JSON. Check the Web app deployment and its access setting.'); }
     if (!response.ok || result.ok !== true) throw new Error(result.error || `Calendar script returned HTTP ${response.status}`);
-    if (row.desired_action === 'upsert' && (!result.event_id || typeof result.event_id !== 'string')) {
-      throw new Error('Calendar script did not return an event_id');
+    if (row.desired_action === 'upsert' && (!result.eventId || typeof result.eventId !== 'string')) {
+      throw new Error('Calendar script did not return an eventId');
     }
     const client = adminClient();
     if (row.desired_action === 'delete') {
@@ -104,7 +103,7 @@ export async function deliverCalendarSync(userId: string, entryId: string) {
       if (error) throw new Error(error.message);
     } else {
       const { error } = await client.from('timelogger_calendar_sync').update({
-        event_id: result.event_id,
+        event_id: result.eventId,
         status: 'synced',
         last_error: null,
         attempts: row.attempts + 1,
