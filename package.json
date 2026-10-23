@@ -1,6 +1,6 @@
 {
   "name": "timelogger",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -15,7 +15,9 @@
     "@emotion/styled": "^11.14.0",
     "@mui/material": "^9.4.0",
     "@mui/material-nextjs": "^9.4.0",
+    "@mui/x-date-pickers": "^9.16.0",
     "@supabase/supabase-js": "^2.117.2",
+    "dayjs": "^1.11.23",
     "next": "^16.3.8",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"

@@ -9,6 +9,11 @@ import {
   TableBody, TableCell, TableContainer, TableHead, TableRow, Tabs, TextField, Toolbar,
   ToggleButton, ToggleButtonGroup, Tooltip, Typography,
 } from '@mui/material';
+import { DatePicker } from '@mui/x-date-pickers/DatePicker';
+import { TimePicker } from '@mui/x-date-pickers/TimePicker';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
+import dayjs, { type Dayjs } from 'dayjs';
 import { browserClient, type TimeEntry } from '@/lib/supabase';
 import { addDays, layoutDay, startOfWeek } from '@/lib/timeline';
 import { calendarScript } from '@/lib/calendar-script';
@@ -41,9 +46,9 @@ function currentDuration(entry: TimeEntry, now: number) {
     ? Math.max(0, (now - new Date(entry.last_resumed_at).getTime()) / 1000) : 0);
 }
 
-function dateTimeLocal(date: Date) {
-  const offset = date.getTimezoneOffset() * 60000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+function combineDateAndTime(date: Dayjs | null, time: Dayjs | null) {
+  if (!date?.isValid() || !time?.isValid()) return null;
+  return date.hour(time.hour()).minute(time.minute()).second(0).millisecond(0);
 }
 
 function dateBoundary(value: string, nextDay = false) {
@@ -98,8 +103,10 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   const [editProject, setEditProject] = useState('');
   const [editTask, setEditTask] = useState('');
   const [editDescription, setEditDescription] = useState('');
-  const [editStart, setEditStart] = useState('');
-  const [editEnd, setEditEnd] = useState('');
+  const [editStartDate, setEditStartDate] = useState<Dayjs | null>(null);
+  const [editStartTime, setEditStartTime] = useState<Dayjs | null>(null);
+  const [editEndDate, setEditEndDate] = useState<Dayjs | null>(null);
+  const [editEndTime, setEditEndTime] = useState<Dayjs | null>(null);
   const [entryDialogError, setEntryDialogError] = useState('');
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [entryCount, setEntryCount] = useState(0);
@@ -124,8 +131,10 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   const [calendarHasSecret, setCalendarHasSecret] = useState(false);
   const [calendarError, setCalendarError] = useState('');
   const [calendarPending, setCalendarPending] = useState<CalendarSyncRecord[]>([]);
-  const [manualStart, setManualStart] = useState(() => dateTimeLocal(new Date(Date.now() - 3600000)));
-  const [manualEnd, setManualEnd] = useState(() => dateTimeLocal(new Date()));
+  const [manualStartDate, setManualStartDate] = useState<Dayjs | null>(() => dayjs().subtract(1, 'hour'));
+  const [manualStartTime, setManualStartTime] = useState<Dayjs | null>(() => dayjs().subtract(1, 'hour'));
+  const [manualEndDate, setManualEndDate] = useState<Dayjs | null>(() => dayjs());
+  const [manualEndTime, setManualEndTime] = useState<Dayjs | null>(() => dayjs());
   const [manualProject, setManualProject] = useState('');
   const [manualTask, setManualTask] = useState('');
   const [manualDescription, setManualDescription] = useState('');
@@ -513,10 +522,13 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   async function createManual(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setError(''); setNotice('');
     try {
+      const start = combineDateAndTime(manualStartDate, manualStartTime);
+      const end = combineDateAndTime(manualEndDate, manualEndTime);
+      if (!start || !end || !end.isAfter(start)) throw new Error('Choose valid start and end dates and times, with the end after the start');
       const result = await request('/api/entries', { method: 'POST', body: JSON.stringify({
         project: manualProject, task: manualTask, description: manualDescription,
         ...categoryPayload(manualProject, manualTask), ...(catalogReady ? { tag_ids: manualTagIds } : {}),
-        start_at: new Date(manualStart).toISOString(), end_at: new Date(manualEnd).toISOString(),
+        start_at: start.toDate().toISOString(), end_at: end.toDate().toISOString(),
       }) });
       setNotice(result.calendar_sync?.status === 'failed' ? 'Time entry added. Calendar sync failed; retry it in Settings.' : 'Time entry added');
       void refreshCalendarSync();
@@ -534,8 +546,10 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     setEditProject(item.project);
     setEditTask(item.task);
     setEditDescription(item.description);
-    setEditStart(dateTimeLocal(new Date(item.start_at)));
-    setEditEnd(item.end_at ? dateTimeLocal(new Date(item.end_at)) : '');
+    const start = dayjs(item.start_at);
+    const end = item.end_at ? dayjs(item.end_at) : null;
+    setEditStartDate(start); setEditStartTime(start);
+    setEditEndDate(end); setEditEndTime(end);
     setEditTagIds(entryTagIds[item.id] ?? []);
     setEditingEntry(item);
   }
@@ -545,13 +559,17 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     if (!editingEntry) return;
     setBusy(true); setEntryDialogError(''); setNotice('');
     try {
-      const startChanged = editingEntry.status === 'stopped' && editStart !== dateTimeLocal(new Date(editingEntry.start_at));
-      const endChanged = editingEntry.status === 'stopped' && !!editingEntry.end_at && editEnd !== dateTimeLocal(new Date(editingEntry.end_at));
+      const start = combineDateAndTime(editStartDate, editStartTime);
+      const end = combineDateAndTime(editEndDate, editEndTime);
+      if (editingEntry.status === 'stopped' && (!start || !end)) throw new Error('Choose valid start and end dates and times');
+      const startChanged = editingEntry.status === 'stopped' && start?.format('YYYY-MM-DDTHH:mm') !== dayjs(editingEntry.start_at).format('YYYY-MM-DDTHH:mm');
+      const endChanged = editingEntry.status === 'stopped' && !!editingEntry.end_at && end?.format('YYYY-MM-DDTHH:mm') !== dayjs(editingEntry.end_at).format('YYYY-MM-DDTHH:mm');
+      if ((startChanged || endChanged) && (!start || !end || !end.isAfter(start))) throw new Error('End must be after the start');
       const result = await request(`/api/entries/${editingEntry.id}`, { method: 'PATCH', body: JSON.stringify({
         project: editProject, task: editTask, description: editDescription,
         ...categoryPayload(editProject, editTask), ...(catalogReady ? { tag_ids: editTagIds } : {}),
-        ...(startChanged ? { start_at: new Date(editStart).toISOString() } : {}),
-        ...(endChanged ? { end_at: new Date(editEnd).toISOString() } : {}),
+        ...(startChanged ? { start_at: start!.toDate().toISOString() } : {}),
+        ...(endChanged ? { end_at: end!.toDate().toISOString() } : {}),
       }) });
       setEditingEntry(null);
       setNotice(result.calendar_sync?.status === 'failed' ? 'Time entry updated. Calendar sync failed; retry it in Settings.' : 'Time entry updated');
@@ -598,7 +616,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     </CardContent></Card>
   </Box>;
 
-  return <Box sx={{ minHeight: '100vh', bgcolor: 'grey.50' }}>
+  return <LocalizationProvider dateAdapter={AdapterDayjs}><Box sx={{ minHeight: '100vh', bgcolor: 'grey.50' }}>
     <AppBar position="sticky" elevation={0}><Toolbar><Typography variant="h6" sx={{ flexGrow: 1, fontWeight: 700 }}>Timelogger</Typography><Typography variant="body2" sx={{ display: { xs: 'none', sm: 'block' }, mr: 2 }}>{session.user.email}</Typography><Button color="inherit" onClick={() => void supabase.auth.signOut()}>Sign out</Button></Toolbar></AppBar>
     <Container maxWidth="lg" component="main" sx={{ py: { xs: 2, sm: 4 } }}><Stack spacing={3}>
       <Paper variant="outlined" sx={{ borderRadius: 3, overflow: 'hidden' }}><Tabs value={view} onChange={(_event, next: View) => navigate(next)} variant="scrollable" scrollButtons="auto" aria-label="Timelogger sections"><Tab label="Dashboard" value="dashboard" id="tab-dashboard" aria-controls="panel-dashboard" /><Tab label="Time entries" value="entries" id="tab-entries" aria-controls="panel-entries" /><Tab label="Projects & tags" value="catalog" id="tab-catalog" aria-controls="panel-catalog" /><Tab label="Settings" value="settings" id="tab-settings" aria-controls="panel-settings" /></Tabs></Paper>
@@ -633,7 +651,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
               <Button aria-label="Previous period" onClick={() => setTimelineAnchor(addDays(timelineAnchor, timelineMode === 'week' ? -7 : -1))}>‹</Button>
               <Button onClick={() => setTimelineAnchor(new Date())}>Today</Button>
               <Button aria-label="Next period" onClick={() => setTimelineAnchor(addDays(timelineAnchor, timelineMode === 'week' ? 7 : 1))}>›</Button>
-              <TextField label="Go to date" type="date" size="small" value={dateTimeLocal(timelineAnchor).slice(0, 10)} onChange={(event) => { if (event.target.value) setTimelineAnchor(new Date(`${event.target.value}T12:00:00`)); }} slotProps={{ inputLabel: { shrink: true } }} sx={{ width: 170 }} />
+              <DatePicker label="Go to date" value={dayjs(timelineAnchor)} onChange={(value) => { if (value?.isValid()) setTimelineAnchor(value.hour(12).toDate()); }} slotProps={{ textField: { size: 'small', sx: { width: 170 } } }} />
               <ToggleButtonGroup size="small" exclusive value={timelineMode} onChange={(_event, value: 'week' | 'day' | null) => { if (value) setTimelineMode(value); }} aria-label="Timeline view"><ToggleButton value="week">Week</ToggleButton><ToggleButton value="day">Day</ToggleButton></ToggleButtonGroup>
               <Tooltip title="Zoom out"><span><Button aria-label="Zoom out" disabled={hourHeight <= 29} onClick={() => changeZoom(-14)}>−</Button></span></Tooltip>
               <Typography variant="body2" sx={{ minWidth: 42, textAlign: 'center' }}>{Math.round(hourHeight / defaultHourHeight * 100)}%</Typography>
@@ -747,8 +765,8 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
       {catalogReady ? <><TextField select label="Project" value={manualProject} onChange={(e) => { setManualProject(e.target.value); setManualTask(''); }} fullWidth><MenuItem value="">No project</MenuItem>{projects.filter((item) => !item.archived).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{manualProject && !projects.some((item) => item.key === manualProject) && <MenuItem value={manualProject}>{manualProject} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('project', 'manual')}>New project</Button><TextField select label="Task" value={manualTask} onChange={(e) => setManualTask(e.target.value)} fullWidth><MenuItem value="">No task</MenuItem>{tasks.filter((item) => !item.archived && item.project_id === projects.find((record) => record.key === manualProject)?.id).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{manualTask && !tasks.some((item) => item.key === manualTask && item.project_id === projects.find((record) => record.key === manualProject)?.id) && <MenuItem value={manualTask}>{manualTask} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('task', 'manual')} disabled={!projects.some((item) => item.key === manualProject)}>New task</Button></> : <><TextField label="Project" value={manualProject} onChange={(e) => setManualProject(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /><TextField label="Task" value={manualTask} onChange={(e) => setManualTask(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /></>}
       <TextField label="Description" value={manualDescription} onChange={(e) => setManualDescription(e.target.value)} fullWidth multiline minRows={2} slotProps={{ htmlInput: { maxLength: 500 } }} />
       {catalogReady && <Stack direction="row" spacing={1}><Autocomplete multiple options={tags} getOptionLabel={(option) => option.name} value={tags.filter((item) => manualTagIds.includes(item.id))} onChange={(_event, value) => setManualTagIds(value.map((item) => item.id))} renderInput={(params) => <TextField {...params} label="Tags" />} sx={{ flex: 1 }} /><Button onClick={() => openCatalog('tag', 'manual')}>New tag</Button></Stack>}
-      <TextField label="Start" type="datetime-local" value={manualStart} onChange={(e) => setManualStart(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} required fullWidth />
-      <TextField label="End" type="datetime-local" value={manualEnd} onChange={(e) => setManualEnd(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} required fullWidth />
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}><DatePicker label="Start date" value={manualStartDate} onChange={setManualStartDate} slotProps={{ textField: { required: true, fullWidth: true } }} /><TimePicker label="Start time" value={manualStartTime} onChange={setManualStartTime} ampm={false} slotProps={{ textField: { required: true, fullWidth: true } }} /></Stack>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}><DatePicker label="End date" value={manualEndDate} onChange={setManualEndDate} slotProps={{ textField: { required: true, fullWidth: true } }} /><TimePicker label="End time" value={manualEndTime} onChange={setManualEndTime} ampm={false} slotProps={{ textField: { required: true, fullWidth: true } }} /></Stack>
       {error && <Alert severity="error">{error}</Alert>}
     </Stack></DialogContent><DialogActions><Button onClick={() => setManualDialogOpen(false)}>Cancel</Button><Button type="submit" variant="contained" disabled={busy}>Add entry</Button></DialogActions></Box></Dialog>
     <Dialog open={!!selectedTimelineEntry} onClose={() => setSelectedTimelineEntry(null)} fullWidth maxWidth="xs"><DialogTitle>Time entry</DialogTitle><DialogContent><Stack spacing={1}>
@@ -762,7 +780,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
       {catalogReady ? <><TextField select label="Project" value={editProject} onChange={(e) => { setEditProject(e.target.value); setEditTask(''); }} fullWidth><MenuItem value="">No project</MenuItem>{projects.filter((item) => !item.archived || item.key === editProject).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{editProject && !projects.some((item) => item.key === editProject) && <MenuItem value={editProject}>{editProject} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('project', 'edit')}>New project</Button><TextField select label="Task" value={editTask} onChange={(e) => setEditTask(e.target.value)} fullWidth><MenuItem value="">No task</MenuItem>{tasks.filter((item) => (!item.archived || item.key === editTask) && item.project_id === projects.find((record) => record.key === editProject)?.id).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{editTask && !tasks.some((item) => item.key === editTask && item.project_id === projects.find((record) => record.key === editProject)?.id) && <MenuItem value={editTask}>{editTask} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('task', 'edit')} disabled={!projects.some((item) => item.key === editProject)}>New task</Button></> : <><TextField label="Project" value={editProject} onChange={(e) => setEditProject(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /><TextField label="Task" value={editTask} onChange={(e) => setEditTask(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /></>}
       <TextField label="Description" value={editDescription} onChange={(e) => setEditDescription(e.target.value)} fullWidth multiline minRows={2} slotProps={{ htmlInput: { maxLength: 500 } }} />
       {catalogReady && <Stack direction="row" spacing={1}><Autocomplete multiple options={tags} getOptionLabel={(option) => option.name} value={tags.filter((item) => editTagIds.includes(item.id))} onChange={(_event, value) => setEditTagIds(value.map((item) => item.id))} renderInput={(params) => <TextField {...params} label="Tags" />} sx={{ flex: 1 }} /><Button onClick={() => openCatalog('tag', 'edit')}>New tag</Button></Stack>}
-      {editingEntry?.status === 'stopped' ? <><TextField label="Start" type="datetime-local" value={editStart} onChange={(e) => setEditStart(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} required fullWidth /><TextField label="End" type="datetime-local" value={editEnd} onChange={(e) => setEditEnd(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} required fullWidth /><Typography variant="body2" color="text.secondary">Changing start or end time recalculates tracked duration from the new time range.</Typography></> : <Typography variant="body2" color="text.secondary">Stop this timer to edit its start and end times.</Typography>}
+      {editingEntry?.status === 'stopped' ? <><Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}><DatePicker label="Start date" value={editStartDate} onChange={setEditStartDate} slotProps={{ textField: { required: true, fullWidth: true } }} /><TimePicker label="Start time" value={editStartTime} onChange={setEditStartTime} ampm={false} slotProps={{ textField: { required: true, fullWidth: true } }} /></Stack><Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}><DatePicker label="End date" value={editEndDate} onChange={setEditEndDate} slotProps={{ textField: { required: true, fullWidth: true } }} /><TimePicker label="End time" value={editEndTime} onChange={setEditEndTime} ampm={false} slotProps={{ textField: { required: true, fullWidth: true } }} /></Stack><Typography variant="body2" color="text.secondary">Changing start or end time recalculates tracked duration from the new time range.</Typography></> : <Typography variant="body2" color="text.secondary">Stop this timer to edit its start and end times.</Typography>}
       {entryDialogError && <Alert severity="error">{entryDialogError}</Alert>}
     </Stack></DialogContent><DialogActions><Button onClick={() => setEditingEntry(null)} disabled={busy}>Cancel</Button><Button type="submit" variant="contained" disabled={busy}>Save changes</Button></DialogActions></Box></Dialog>
     <Dialog open={!!deletingEntry} onClose={() => { if (!busy) setDeletingEntry(null); }} fullWidth maxWidth="xs"><DialogTitle>Delete time entry?</DialogTitle><DialogContent><Typography>Delete “{deletingEntry?.task || deletingEntry?.description || 'Untitled work'}”? {deletingEntry?.status === 'stopped' ? 'This cannot be undone.' : 'This will remove the active timer and cannot be undone.'}</Typography>{entryDialogError && <Alert severity="error" sx={{ mt: 2 }}>{entryDialogError}</Alert>}</DialogContent><DialogActions><Button onClick={() => setDeletingEntry(null)} disabled={busy}>Cancel</Button><Button variant="contained" color="error" onClick={() => void deleteEntry()} disabled={busy}>Delete entry</Button></DialogActions></Dialog>
@@ -774,5 +792,5 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
       {catalogDialogError && <Alert severity="error">{catalogDialogError}</Alert>}
     </Stack></DialogContent><DialogActions><Button onClick={() => setCatalogDialog(null)} disabled={busy}>Cancel</Button><Button type="submit" variant="contained" disabled={busy}>Save</Button></DialogActions></Box></Dialog>
     <Dialog open={!!deletingTag} onClose={() => setDeletingTag(null)} fullWidth maxWidth="xs"><DialogTitle>Delete tag?</DialogTitle><DialogContent><Typography>Delete “{deletingTag?.name}” from your tag list and all entries? This cannot be undone.</Typography>{error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}</DialogContent><DialogActions><Button onClick={() => setDeletingTag(null)}>Cancel</Button><Button color="error" variant="contained" disabled={busy} onClick={() => { if (deletingTag) void changeCatalogState('tag', deletingTag.id, false).then((saved) => { if (saved) setDeletingTag(null); }); }}>Delete tag</Button></DialogActions></Dialog>
-  </Box>;
+  </Box></LocalizationProvider>;
 }

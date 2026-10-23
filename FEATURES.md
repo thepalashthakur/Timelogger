@@ -105,6 +105,17 @@ Calendar sync begins after a user saves their deployed `/exec` URL. Running and 
 
 The browser tab uses the supplied stopwatch image as the app icon.
 
+## v0.7 — MUI date and time pickers
+
+| Feature | Status |
+| --- | --- |
+| MUI DatePicker and TimePicker for manual entry creation | Implemented |
+| MUI DatePicker and TimePicker for completed entry editing | Implemented |
+| MUI DatePicker for dashboard timeline navigation | Implemented |
+| Validate local date and time selections before saving | Implemented |
+
+The separate date and time values are combined in the user's local time zone before sending ISO timestamps to the API. Editing only entry details does not rewrite existing timestamps.
+
 ## v1 — custom time entry properties
 
 | Feature | Status |
