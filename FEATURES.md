@@ -101,6 +101,10 @@ Project and task keys are immutable so existing time entries and Jira issue link
 
 Calendar sync begins after a user saves their deployed `/exec` URL. Running and paused timers sync when stopped. The Apps Script stores a Timelogger entry ID to Calendar event ID mapping so repeated requests update the same event.
 
+### v0.6.1 — browser tab icon
+
+The browser tab uses the supplied stopwatch image as the app icon.
+
 ## v1 — custom time entry properties
 
 | Feature | Status |
