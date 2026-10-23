@@ -3,6 +3,8 @@ import { authenticated, badRequest, details, unauthorized } from '@/lib/api';
 import { attachTagsToNewEntry, resolveSelection, validateTagIds } from '@/lib/catalog';
 import { uuidPattern } from '@/lib/catalog';
 import { adminClient } from '@/lib/admin';
+import { queueCalendarUpsert } from '@/lib/calendar';
+import type { TimeEntry } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
@@ -70,5 +72,8 @@ export async function POST(req: NextRequest) {
   if (error) return badRequest(error.message);
   try { if (tagIds?.length) await attachTagsToNewEntry(auth.userId, data.id, tagIds); }
   catch (caught) { return NextResponse.json({ error: caught instanceof Error ? caught.message : 'Could not assign tags' }, { status: 500 }); }
-  return NextResponse.json({ entry: data }, { status: 201 });
+  let calendarSync;
+  try { calendarSync = await queueCalendarUpsert(auth.userId, data as TimeEntry); }
+  catch (caught) { calendarSync = { status: 'failed', error: caught instanceof Error ? caught.message : 'Calendar sync failed' }; }
+  return NextResponse.json({ entry: data, calendar_sync: calendarSync }, { status: 201 });
 }

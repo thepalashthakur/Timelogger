@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
-  Alert, AppBar, Autocomplete, Box, Button, ButtonBase, Card, CardContent, Chip, CircularProgress,
+  Accordion, AccordionDetails, AccordionSummary, Alert, AppBar, Autocomplete, Box, Button, ButtonBase, Card, CardContent, Chip, CircularProgress,
   Container, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Grid,
   MenuItem, Pagination, Paper, Stack, Tab, Table,
   TableBody, TableCell, TableContainer, TableHead, TableRow, Tabs, TextField, Toolbar,
@@ -11,6 +11,7 @@ import {
 } from '@mui/material';
 import { browserClient, type TimeEntry } from '@/lib/supabase';
 import { addDays, layoutDay, startOfWeek } from '@/lib/timeline';
+import { calendarScript } from '@/lib/calendar-script';
 
 type ApiTokenRecord = {
   id: string;
@@ -19,6 +20,7 @@ type ApiTokenRecord = {
   expires_at: string;
   last_used_at: string | null;
 };
+type CalendarSyncRecord = { entry_id: string; desired_action: 'upsert' | 'delete'; status: 'pending' | 'failed'; last_error: string | null };
 type View = 'dashboard' | 'entries' | 'catalog' | 'settings';
 type StatusFilter = 'all' | TimeEntry['status'];
 type ProjectRecord = { id: string; key: string; name: string; color: string; archived: boolean };
@@ -116,6 +118,10 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   const [apiTokens, setApiTokens] = useState<ApiTokenRecord[]>([]);
   const [tokenName, setTokenName] = useState('Jira');
   const [newToken, setNewToken] = useState('');
+  const [calendarUrl, setCalendarUrl] = useState('');
+  const [savedCalendarUrl, setSavedCalendarUrl] = useState('');
+  const [calendarError, setCalendarError] = useState('');
+  const [calendarPending, setCalendarPending] = useState<CalendarSyncRecord[]>([]);
   const [manualStart, setManualStart] = useState(() => dateTimeLocal(new Date(Date.now() - 3600000)));
   const [manualEnd, setManualEnd] = useState(() => dateTimeLocal(new Date()));
   const [manualProject, setManualProject] = useState('');
@@ -252,16 +258,35 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not load API tokens'); }
   }, [request, session]);
 
+  const refreshCalendarSettings = useCallback(async () => {
+    if (!session) return;
+    try {
+      const data = await request('/api/calendar/settings');
+      const url = data.integration?.script_url ?? '';
+      setCalendarUrl(url); setSavedCalendarUrl(url); setCalendarError('');
+    } catch (caught) { setCalendarError(caught instanceof Error ? caught.message : 'Could not load Calendar settings'); }
+  }, [request, session]);
+
+  const refreshCalendarSync = useCallback(async () => {
+    if (!session) return;
+    try {
+      const data = await request('/api/calendar/sync');
+      setCalendarPending(data.pending);
+    } catch (caught) { setCalendarError(caught instanceof Error ? caught.message : 'Could not load Calendar sync status'); }
+  }, [request, session]);
+
   useEffect(() => {
-    if (!session) { setEntry(null); setEntries([]); setTimelineEntries([]); setProjects([]); setTasks([]); setTags([]); setCatalogReady(false); setEntryTagIds({}); setApiTokens([]); setNewToken(''); entryRequestId.current += 1; timelineRequestId.current += 1; return; }
+    if (!session) { setEntry(null); setEntries([]); setTimelineEntries([]); setProjects([]); setTasks([]); setTags([]); setCatalogReady(false); setEntryTagIds({}); setApiTokens([]); setNewToken(''); setCalendarUrl(''); setSavedCalendarUrl(''); setCalendarError(''); setCalendarPending([]); entryRequestId.current += 1; timelineRequestId.current += 1; return; }
     void refreshTimer();
     void refreshTokens();
+    void refreshCalendarSettings();
+    void refreshCalendarSync();
     const ticker = window.setInterval(() => setNow(Date.now()), 1000);
     const sync = window.setInterval(() => void refreshTimer(), 30000);
     const onFocus = () => void refreshTimer();
     window.addEventListener('focus', onFocus);
     return () => { window.clearInterval(ticker); window.clearInterval(sync); window.removeEventListener('focus', onFocus); };
-  }, [session, refreshTimer, refreshTokens]);
+  }, [session, refreshTimer, refreshTokens, refreshCalendarSettings, refreshCalendarSync]);
 
   useEffect(() => {
     if (!session) return;
@@ -419,6 +444,37 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     finally { setBusy(false); }
   }
 
+  async function saveCalendarSettings(event: React.FormEvent) {
+    event.preventDefault(); setBusy(true); setCalendarError(''); setNotice('');
+    try {
+      const data = await request('/api/calendar/settings', { method: 'PUT', body: JSON.stringify({ script_url: calendarUrl }) });
+      setCalendarUrl(data.integration.script_url);
+      setSavedCalendarUrl(data.integration.script_url);
+      setNotice('Google Calendar deployment URL saved');
+    } catch (caught) { setCalendarError(caught instanceof Error ? caught.message : 'Could not save Calendar URL'); }
+    finally { setBusy(false); }
+  }
+
+  async function disconnectCalendar() {
+    setBusy(true); setCalendarError(''); setNotice('');
+    try {
+      await request('/api/calendar/settings', { method: 'DELETE' });
+      setCalendarUrl(''); setSavedCalendarUrl('');
+      setNotice('Google Calendar disconnected');
+    } catch (caught) { setCalendarError(caught instanceof Error ? caught.message : 'Could not disconnect Calendar'); }
+    finally { setBusy(false); }
+  }
+
+  async function retryCalendarSync() {
+    setBusy(true); setCalendarError(''); setNotice('');
+    try {
+      const data = await request('/api/calendar/sync', { method: 'POST' });
+      await refreshCalendarSync();
+      setNotice(`Synced ${data.synced} of ${data.attempted} pending Calendar changes`);
+    } catch (caught) { setCalendarError(caught instanceof Error ? caught.message : 'Could not retry Calendar sync'); }
+    finally { setBusy(false); }
+  }
+
   async function authenticate(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setError(''); setNotice('');
     try {
@@ -438,8 +494,12 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     setBusy(true); setError(''); setNotice('');
     try {
       const body = action === 'start' ? { action, project, task, description, ...categoryPayload(project, task), ...(catalogReady ? { tag_ids: startTagIds } : {}) } : { action };
-      await request('/api/timer', { method: 'POST', body: JSON.stringify(body) });
+      const result = await request('/api/timer', { method: 'POST', body: JSON.stringify(body) });
       await Promise.all([refreshTimer(), loadEntries(), loadTimeline()]);
+      if (action === 'stop') {
+        void refreshCalendarSync();
+        if (result.calendar_sync?.status === 'failed') setNotice('Timer stopped. Calendar sync failed; retry it in Settings.');
+      }
       if (action === 'start') setStartTagIds([]);
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Timer action failed'); }
     finally { setBusy(false); }
@@ -448,12 +508,13 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   async function createManual(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setError(''); setNotice('');
     try {
-      await request('/api/entries', { method: 'POST', body: JSON.stringify({
+      const result = await request('/api/entries', { method: 'POST', body: JSON.stringify({
         project: manualProject, task: manualTask, description: manualDescription,
         ...categoryPayload(manualProject, manualTask), ...(catalogReady ? { tag_ids: manualTagIds } : {}),
         start_at: new Date(manualStart).toISOString(), end_at: new Date(manualEnd).toISOString(),
       }) });
-      setNotice('Time entry added');
+      setNotice(result.calendar_sync?.status === 'failed' ? 'Time entry added. Calendar sync failed; retry it in Settings.' : 'Time entry added');
+      void refreshCalendarSync();
       setManualDescription('');
       setManualTagIds([]);
       setManualDialogOpen(false);
@@ -481,14 +542,15 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     try {
       const startChanged = editingEntry.status === 'stopped' && editStart !== dateTimeLocal(new Date(editingEntry.start_at));
       const endChanged = editingEntry.status === 'stopped' && !!editingEntry.end_at && editEnd !== dateTimeLocal(new Date(editingEntry.end_at));
-      await request(`/api/entries/${editingEntry.id}`, { method: 'PATCH', body: JSON.stringify({
+      const result = await request(`/api/entries/${editingEntry.id}`, { method: 'PATCH', body: JSON.stringify({
         project: editProject, task: editTask, description: editDescription,
         ...categoryPayload(editProject, editTask), ...(catalogReady ? { tag_ids: editTagIds } : {}),
         ...(startChanged ? { start_at: new Date(editStart).toISOString() } : {}),
         ...(endChanged ? { end_at: new Date(editEnd).toISOString() } : {}),
       }) });
       setEditingEntry(null);
-      setNotice('Time entry updated');
+      setNotice(result.calendar_sync?.status === 'failed' ? 'Time entry updated. Calendar sync failed; retry it in Settings.' : 'Time entry updated');
+      void refreshCalendarSync();
       await Promise.all([refreshTimer(), loadEntries(), loadTimeline()]);
     } catch (caught) { setEntryDialogError(caught instanceof Error ? caught.message : 'Could not update entry'); }
     finally { setBusy(false); }
@@ -498,10 +560,11 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     if (!deletingEntry) return;
     setBusy(true); setEntryDialogError(''); setNotice('');
     try {
-      await request(`/api/entries/${deletingEntry.id}`, { method: 'DELETE' });
+      const result = await request(`/api/entries/${deletingEntry.id}`, { method: 'DELETE' });
       setDeletingEntry(null);
       setSelectedTimelineEntry(null);
-      setNotice('Time entry deleted');
+      setNotice(result.calendar_sync?.status === 'failed' ? 'Time entry deleted. Calendar sync failed; retry it in Settings.' : 'Time entry deleted');
+      void refreshCalendarSync();
       if (page > 1 && entries.length === 1) setPage(page - 1);
       else await loadEntries();
       await Promise.all([refreshTimer(), loadTimeline()]);
@@ -639,6 +702,23 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
       </Stack></Box>}
       {view === 'settings' && <Box role="tabpanel" id="panel-settings" aria-labelledby="tab-settings"><Stack spacing={3}>
         <Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Settings</Typography><Typography color="text.secondary">Manage integration access to your account.</Typography></Box>
+      <Paper variant="outlined" sx={{ borderRadius: 3, p: 3 }}><Stack spacing={2}>
+        <Box><Typography variant="h6" sx={{ fontWeight: 700 }}>Google Calendar</Typography><Typography color="text.secondary">Deploy the Apps Script in your own Google account, then save its Web app URL here. Completed time entries will sync to your calendar.</Typography></Box>
+        <Accordion variant="outlined"><AccordionSummary><Typography>Apps Script code and setup steps</Typography></AccordionSummary><AccordionDetails><Stack spacing={2}>
+          <Typography variant="body2">Create a new project at script.google.com, replace its code with the script below, then choose Deploy → New deployment → Web app. Set Execute as to Me and access to Anyone. Authorize Calendar access, copy the /exec URL, and save it below. Keep that URL private.</Typography>
+          <Button variant="outlined" onClick={() => void navigator.clipboard.writeText(calendarScript)}>Copy script</Button>
+          <TextField label="Apps Script code" value={calendarScript} multiline minRows={8} maxRows={18} fullWidth slotProps={{ htmlInput: { readOnly: true } }} />
+        </Stack></AccordionDetails></Accordion>
+        <Box component="form" onSubmit={saveCalendarSettings}><Stack spacing={2}>
+          <TextField label="Apps Script Web app URL" type="url" value={calendarUrl} onChange={(event) => setCalendarUrl(event.target.value)} placeholder="https://script.google.com/macros/s/.../exec" helperText="Use the deployed /exec URL, not the /dev test URL." required fullWidth slotProps={{ htmlInput: { maxLength: 2048 } }} />
+          <Stack direction="row" spacing={1}><Button type="submit" variant="contained" disabled={busy || !calendarUrl.trim() || calendarUrl === savedCalendarUrl}>Save URL</Button>{savedCalendarUrl && <Button color="error" onClick={() => void disconnectCalendar()} disabled={busy}>Disconnect</Button>}</Stack>
+        </Stack></Box>
+        {calendarError && <Alert severity="error">{calendarError}</Alert>}
+        {savedCalendarUrl && <Alert severity="success">Calendar connection configured for this account.</Alert>}
+        {calendarPending.length > 0 && <Alert severity="warning" action={<Button color="inherit" size="small" onClick={() => void retryCalendarSync()} disabled={busy || !savedCalendarUrl}>Retry</Button>}>
+          {calendarPending.length} Calendar change{calendarPending.length === 1 ? '' : 's'} need syncing. {calendarPending[0]?.last_error ?? ''}
+        </Alert>}
+      </Stack></Paper>
       <Paper variant="outlined" sx={{ borderRadius: 3, p: 3 }}><Stack spacing={2}>
         <Box><Typography variant="h6" sx={{ fontWeight: 700 }}>API tokens</Typography><Typography color="text.secondary">Create a token for the Jira app. Each token expires after 90 days and can be revoked here.</Typography></Box>
         <Box component="form" onSubmit={createToken}><Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>

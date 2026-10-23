@@ -3,6 +3,7 @@ import { adminClient } from '@/lib/admin';
 import { authenticated, badRequest, details, unauthorized } from '@/lib/api';
 import type { TimeEntry } from '@/lib/supabase';
 import { resolveSelection, setEntryTags, validateTagIds } from '@/lib/catalog';
+import { queueCalendarDelete, queueCalendarUpsert } from '@/lib/calendar';
 
 export const dynamic = 'force-dynamic';
 
@@ -76,9 +77,11 @@ export async function PATCH(req: NextRequest, { params }: Context) {
     .select('*').maybeSingle();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (data && tagIds) await setEntryTags(auth.userId, id, tagIds);
-  return data
-    ? NextResponse.json({ entry: data as TimeEntry })
-    : NextResponse.json({ error: 'Entry changed. Refresh and try again' }, { status: 409 });
+  if (!data) return NextResponse.json({ error: 'Entry changed. Refresh and try again' }, { status: 409 });
+  let calendarSync;
+  try { calendarSync = await queueCalendarUpsert(auth.userId, data as TimeEntry); }
+  catch (caught) { calendarSync = { status: 'failed', error: caught instanceof Error ? caught.message : 'Calendar sync failed' }; }
+  return NextResponse.json({ entry: data as TimeEntry, calendar_sync: calendarSync });
 }
 
 export async function DELETE(req: NextRequest, { params }: Context) {
@@ -90,5 +93,9 @@ export async function DELETE(req: NextRequest, { params }: Context) {
   const { data, error } = await client.from('timelogger_time_entries').delete()
     .eq('id', id).eq('user_id', auth.userId).select('id').maybeSingle();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return data ? NextResponse.json({ deleted: true }) : notFound();
+  if (!data) return notFound();
+  let calendarSync;
+  try { calendarSync = await queueCalendarDelete(auth.userId, id); }
+  catch (caught) { calendarSync = { status: 'failed', error: caught instanceof Error ? caught.message : 'Calendar sync failed' }; }
+  return NextResponse.json({ deleted: true, calendar_sync: calendarSync });
 }

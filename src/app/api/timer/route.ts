@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticated, badRequest, details, unauthorized } from '@/lib/api';
 import { attachTagsToNewEntry, ensureJiraCatalog, resolveSelection, validateTagIds } from '@/lib/catalog';
+import { queueCalendarUpsert } from '@/lib/calendar';
+import type { TimeEntry } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,5 +55,11 @@ export async function POST(req: NextRequest) {
   const { data, error } = auth.kind === 'api_token'
     ? await auth.client.rpc('timelogger_api_transition_timer', { p_user_id: auth.userId, p_action: action })
     : await auth.client.rpc('timelogger_transition_timer', { p_action: action });
-  return error ? badRequest(error.message) : NextResponse.json({ entry: data });
+  if (error) return badRequest(error.message);
+  let calendarSync;
+  if (action === 'stop') {
+    try { calendarSync = await queueCalendarUpsert(auth.userId, data as TimeEntry); }
+    catch (caught) { calendarSync = { status: 'failed', error: caught instanceof Error ? caught.message : 'Calendar sync failed' }; }
+  }
+  return NextResponse.json({ entry: data, calendar_sync: calendarSync });
 }
