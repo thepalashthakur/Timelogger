@@ -165,6 +165,19 @@ Supabase Auth must have email/password enabled and its Site URL set to the deplo
 
 Release order: apply `supabase/task_hierarchy.sql`, deploy the web app, then deploy Forge and upgrade its Jira installation for the new `read:jira-work` scope. Existing tasks remain roots until arranged manually or revisited from Jira. Jira ancestry is refreshed when a timer is started from its issue panel; broader historical Jira imports and scheduled re-sync are not included in v0.11.
 
+## v0.12 — time entry hierarchy insights
+
+| Feature | Status |
+| --- | --- |
+| Open the same details dialog from timeline, active timer, and desktop/mobile history | Implemented |
+| Show clickable project → parent → child task path for the entry | Implemented |
+| Browse parent and child tasks inside the entry dialog | Implemented |
+| Show task type, stable key, archived/Jira source, direct time, and descendant time | Implemented |
+| Keep entry duration, status, description, tags, times, and Calendar link together | Implemented |
+| Handle entries without a catalog task and cyclic or missing parent metadata gracefully | Implemented |
+
+The entry still stores its stable project and task keys. The dialog resolves those keys against the retained catalog hierarchy, including archived tasks. No database migration is required.
+
 ## v1 — custom time entry properties
 
 | Feature | Status |
