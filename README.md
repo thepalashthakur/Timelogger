@@ -55,6 +55,10 @@ Starting a timer from the Jira panel now reads the issue and its ancestors throu
 
 From v0.12, open **Details** on a time entry in the timeline, active timer, or history. The dialog shows clickable project and task breadcrumbs, direct children, and all-time tracked time for the selected level. It also keeps the entry's duration, status, description, tags, start/end times, and Calendar link in one place. Existing entries resolve their hierarchy through their stable project/task keys; entries without a matching catalog task display their key and an import hint. No new migration is needed.
 
+## Analytics (v0.13)
+
+The **Analytics** tab summarizes tracked time with date, project, nested task, tag, status, and text filters. Group by project, task path, top-level task, tag, day, or week; choose a bar, donut, or daily trend chart; and open recent entries from a breakdown group. The API is user-scoped and returns an explicit error above 20,000 matching entries. No migration or Forge update is needed. See [ANALYTICS.md](ANALYTICS.md) for report semantics and planned extensions.
+
 The Forge resolver reads `TIMELOGGER_API_ORIGIN`; the outbound domain in `forge/manifest.yml` currently allows `https://timelogger-gilt.vercel.app`. If the web app domain changes, update the manifest origin, run `npx forge variables set --environment development TIMELOGGER_API_ORIGIN https://<your-domain>`, and deploy Forge again. If installing on a different Jira site or environment, use its site host and the same environment consistently for the variable, deployment, and installation. See the [Forge README](forge/README.md) for first-time installation.
 
 The API accepts a Supabase access token or personal API token in `Authorization: Bearer <token>`. See `FEATURES.md` for release scope.
@@ -100,6 +104,7 @@ data is restricted to that user. Personal tokens cannot create or revoke tokens.
 | `GET` | `/api/entries` | Paginated entries; defaults to the 100 most recent |
 | `POST` | `/api/entries` | `{ "project": "Website", "task": "Review", "description": "QA", "start_at": "2026-10-20T09:00:00Z", "end_at": "2026-10-20T10:00:00Z" }` |
 | `GET` | `/api/entries/{id}` | One entry owned by the authenticated user |
+| `GET` | `/api/analytics?from=<ISO>&to=<ISO>&timezone=<IANA>&group_by=project` | Summary, grouped breakdown, and daily trend; optional `project`, `task_id`, `include_children`, `tag_id`, `status`, and `q` filters |
 | `PATCH` | `/api/entries/{id}` | Update project, task, or description on any entry; completed entries also support start/end changes that recalculate duration |
 | `DELETE` | `/api/entries/{id}` | Delete an entry; deleting a running or paused entry removes its active timer |
 | `GET` | `/api/timeline?from=<ISO>&to=<ISO>` | Entries overlapping a period of up to 32 days; returns `entries`, `count`, and `truncated` (500 entry limit) |

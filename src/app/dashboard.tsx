@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
 import type { Session } from '@supabase/supabase-js';
 import {
   Accordion, AccordionDetails, AccordionSummary, Alert, AppBar, Autocomplete, Box, Breadcrumbs, Button, ButtonBase, Card, CardContent, Chip, CircularProgress,
@@ -19,6 +20,8 @@ import { addDays, layoutDay, startOfWeek } from '@/lib/timeline';
 import { calendarScript } from '@/lib/calendar-script';
 import { findEntryTask, taskLineage } from '@/lib/entry-insights';
 
+const Analytics = dynamic(() => import('./analytics'), { ssr: false });
+
 type ApiTokenRecord = {
   id: string;
   name: string;
@@ -28,7 +31,7 @@ type ApiTokenRecord = {
 };
 type CalendarSyncRecord = { entry_id: string; desired_action: 'upsert' | 'delete'; status: 'pending' | 'failed'; last_error: string | null };
 type GoogleCalendarOption = { id: string; summary: string; primary?: boolean };
-type View = 'dashboard' | 'entries' | 'catalog' | 'settings';
+type View = 'dashboard' | 'entries' | 'analytics' | 'catalog' | 'settings';
 type StatusFilter = 'all' | TimeEntry['status'];
 type ProjectRecord = { id: string; key: string; name: string; color: string; archived: boolean };
 type TaskRecord = { id: string; project_id: string; key: string; name: string; archived: boolean; parent_task_id: string | null; issue_type: string; source: 'manual' | 'jira' };
@@ -182,7 +185,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     const syncView = () => {
       const hash = window.location.hash.slice(1);
       if (hash === 'timer') setView('dashboard');
-      if (hash === 'dashboard' || hash === 'entries' || hash === 'catalog' || hash === 'settings') setView(hash);
+      if (hash === 'dashboard' || hash === 'entries' || hash === 'analytics' || hash === 'catalog' || hash === 'settings') setView(hash);
     };
     syncView();
     window.addEventListener('hashchange', syncView);
@@ -434,6 +437,13 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     setDetailFocusTaskId(linkedTask?.id ?? (item.task || null));
     setSelectedTimelineEntry(item);
     void loadCatalog();
+  }
+
+  async function openAnalyticsEntry(id: string) {
+    try {
+      const data = await request(`/api/entries/${id}`);
+      openEntryDetails(data.entry as TimeEntry);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not open time entry'); }
   }
 
   function taskDescendants(id: string) {
@@ -843,7 +853,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   return <LocalizationProvider dateAdapter={AdapterDayjs}><Box sx={{ minHeight: '100vh', bgcolor: 'grey.50' }}>
     <AppBar position="sticky" elevation={0}><Toolbar><Typography variant="h6" sx={{ flexGrow: 1, fontWeight: 700 }}>Timelogger</Typography><Typography variant="body2" sx={{ display: { xs: 'none', sm: 'block' }, mr: 2 }}>{session.user.email}</Typography><Button color="inherit" onClick={() => void supabase.auth.signOut()}>Sign out</Button></Toolbar></AppBar>
     <Container maxWidth="lg" component="main" sx={{ py: { xs: 2, sm: 4 } }}><Stack spacing={3}>
-      <Paper variant="outlined" sx={{ borderRadius: 3, overflow: 'hidden' }}><Tabs value={view} onChange={(_event, next: View) => navigate(next)} variant="scrollable" scrollButtons="auto" aria-label="Timelogger sections"><Tab label="Dashboard" value="dashboard" id="tab-dashboard" aria-controls="panel-dashboard" /><Tab label="Time entries" value="entries" id="tab-entries" aria-controls="panel-entries" /><Tab label="Projects & tags" value="catalog" id="tab-catalog" aria-controls="panel-catalog" /><Tab label="Settings" value="settings" id="tab-settings" aria-controls="panel-settings" /></Tabs></Paper>
+      <Paper variant="outlined" sx={{ borderRadius: 3, overflow: 'hidden' }}><Tabs value={view} onChange={(_event, next: View) => navigate(next)} variant="scrollable" scrollButtons="auto" aria-label="Timelogger sections"><Tab label="Dashboard" value="dashboard" id="tab-dashboard" aria-controls="panel-dashboard" /><Tab label="Time entries" value="entries" id="tab-entries" aria-controls="panel-entries" /><Tab label="Analytics" value="analytics" id="tab-analytics" aria-controls="panel-analytics" /><Tab label="Projects & tags" value="catalog" id="tab-catalog" aria-controls="panel-catalog" /><Tab label="Settings" value="settings" id="tab-settings" aria-controls="panel-settings" /></Tabs></Paper>
       {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
       {notice && <Alert severity="success" onClose={() => setNotice('')}>{notice}</Alert>}
       {catalogError && <Alert severity="warning" onClose={() => setCatalogError('')}>Projects, tasks, and tags are unavailable: {catalogError}. Apply <code>supabase/catalog.sql</code> to enable v0.5.</Alert>}
@@ -900,7 +910,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
             </Box>
           </Box>
           <Divider />
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ p: 2, justifyContent: 'space-between', alignItems: { sm: 'center' } }}><Typography variant="body2" color="text.secondary">Click a block to edit or delete its entry. Paused timers use a short marker at their start because pause time is not stored.</Typography><Button onClick={() => navigate('entries')}>Manage time entries</Button></Stack>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ p: 2, justifyContent: 'space-between', alignItems: { sm: 'center' } }}><Typography variant="body2" color="text.secondary">Click a block to inspect its entry. Paused timers use a short marker at their start because pause time is not stored.</Typography><Button onClick={() => navigate('entries')}>Manage time entries</Button></Stack>
         </Stack></Paper>
       </Stack></Box>}
       {view === 'entries' && <Box role="tabpanel" id="panel-entries" aria-labelledby="tab-entries"><Stack spacing={3}>
@@ -932,6 +942,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
           {!entriesLoading && !entriesError && entryCount > pageSize && <Box sx={{ p: 2, display: 'flex', justifyContent: 'center' }}><Pagination count={Math.ceil(entryCount / pageSize)} page={page} onChange={(_event, next) => setPage(next)} showFirstButton showLastButton color="primary" aria-label="Time entry pages" /></Box>}
         </Stack></Paper>
       </Stack></Box>}
+      {view === 'analytics' && <Box role="tabpanel" id="panel-analytics" aria-labelledby="tab-analytics"><Analytics request={request} projects={projects} tasks={tasks} tags={tags} onOpenEntry={(id) => void openAnalyticsEntry(id)} /></Box>}
       {view === 'catalog' && <Box role="tabpanel" id="panel-catalog" aria-labelledby="tab-catalog"><Stack spacing={3}>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}><Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Projects, tasks & tags</Typography><Typography color="text.secondary">Arrange work as project → epic → task → subtask, or use any depth. Tags can be used across projects.</Typography></Box><Button variant="outlined" onClick={() => void importCatalog()} disabled={busy || !catalogReady}>Import from existing entries</Button></Stack>
         <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}><Stack spacing={2}><Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}><Typography variant="h6">Projects</Typography><Button variant="contained" onClick={() => openCatalog('project')}>New project</Button></Stack>

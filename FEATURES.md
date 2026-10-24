@@ -178,6 +178,19 @@ Release order: apply `supabase/task_hierarchy.sql`, deploy the web app, then dep
 
 The entry still stores its stable project and task keys. The dialog resolves those keys against the retained catalog hierarchy, including archived tasks. No database migration is required.
 
+## v0.13 — personal analytics
+
+| Feature | Status |
+| --- | --- |
+| Analytics tab with period, project, nested task, tag, status, and search filters | Implemented |
+| Group by project, full task path, top-level task, tag, day, or week | Implemented |
+| MUI bar, donut, and daily trend charts | Implemented |
+| Tracked time, entry count, daily average, and busiest day cards | Implemented |
+| Breakdown table with recent-entry drilldown to entry details | Implemented |
+| Authenticated report API with explicit large-result limits | Implemented |
+
+See [ANALYTICS.md](ANALYTICS.md) for report semantics, similar-app research, and future analytics scope. No migration is required.
+
 ## v1 — custom time entry properties
 
 | Feature | Status |
