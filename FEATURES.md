@@ -141,6 +141,17 @@ Direct Google Calendar requires a Google Cloud OAuth client, Calendar API, regis
 
 Users connected before v0.9 must reconnect once to grant the new `calendar.calendars` permission. No database migration is needed beyond the v0.8 direct connector migration.
 
+## v0.10 — password recovery and change
+
+| Feature | Status |
+| --- | --- |
+| Request a password reset email from the sign-in screen | Implemented |
+| Set a new password after opening the Supabase recovery link | Implemented |
+| Change password from Settings after verifying the current password | Implemented |
+| Support Supabase email reauthentication codes for older sessions | Implemented |
+
+Supabase Auth must have email/password enabled and its Site URL set to the deployed Timelogger address. Password reset emails use the project's configured email sender. No database migration is needed.
+
 ## v1 — custom time entry properties
 
 | Feature | Status |

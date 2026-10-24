@@ -14,7 +14,7 @@ import { TimePicker } from '@mui/x-date-pickers/TimePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import dayjs, { type Dayjs } from 'dayjs';
-import { browserClient, type TimeEntry } from '@/lib/supabase';
+import { browserClient, passwordCheckClient, type TimeEntry } from '@/lib/supabase';
 import { addDays, layoutDay, startOfWeek } from '@/lib/timeline';
 import { calendarScript } from '@/lib/calendar-script';
 
@@ -62,10 +62,20 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   const supabase = useMemo(() => browserClient(supabaseUrl, supabaseAnonKey), [supabaseUrl, supabaseAnonKey]);
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
-  const [mode, setMode] = useState<'login' | 'signup'>('login');
+  const [mode, setMode] = useState<'login' | 'signup' | 'forgot'>('login');
+  const [recoveryMode, setRecoveryMode] = useState(false);
+  const recoveryLinkRef = useRef(typeof window !== 'undefined' && new URLSearchParams(window.location.hash.slice(1)).get('type') === 'recovery');
   const [view, setView] = useState<View>('dashboard');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [recoveryPassword, setRecoveryPassword] = useState('');
+  const [recoveryConfirm, setRecoveryConfirm] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [changeNonce, setChangeNonce] = useState('');
+  const [changeCodeSent, setChangeCodeSent] = useState(false);
+  const [changeError, setChangeError] = useState('');
   const [project, setProject] = useState('');
   const [task, setTask] = useState('');
   const [description, setDescription] = useState('');
@@ -152,8 +162,14 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
+    if (recoveryLinkRef.current) setRecoveryMode(true);
+    const { data: listener } = supabase.auth.onAuthStateChange((event, next) => {
+      setSession(next);
+      if (event === 'PASSWORD_RECOVERY') setRecoveryMode(true);
+      if (event === 'SIGNED_OUT') setRecoveryMode(false);
+      setReady(true);
+    });
     supabase.auth.getSession().then(({ data }) => { setSession(data.session); setReady(true); });
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, next) => setSession(next));
     return () => listener.subscription.unsubscribe();
   }, [supabase]);
 
@@ -579,7 +595,11 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   async function authenticate(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setError(''); setNotice('');
     try {
-      if (mode === 'login') {
+      if (mode === 'forgot') {
+        const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+        if (error) throw error;
+        setNotice('If an account exists for this email, a password reset link is on its way.');
+      } else if (mode === 'login') {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
       } else {
@@ -588,6 +608,56 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
         if (!data.session) setNotice('Account created. Check your email to confirm it, then sign in.');
       }
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Authentication failed'); }
+    finally { setBusy(false); }
+  }
+
+  async function finishPasswordRecovery(event: React.FormEvent) {
+    event.preventDefault(); setBusy(true); setError(''); setNotice('');
+    try {
+      if (!session) throw new Error('This reset link is expired or invalid. Request a new one.');
+      if (recoveryPassword.length < 8) throw new Error('Use at least 8 characters for your new password');
+      if (recoveryPassword !== recoveryConfirm) throw new Error('New passwords do not match');
+      const { error } = await supabase.auth.updateUser({ password: recoveryPassword });
+      if (error) throw error;
+      setRecoveryPassword(''); setRecoveryConfirm(''); setPassword(''); setMode('login');
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+      const { error: signOutError } = await supabase.auth.signOut();
+      setRecoveryMode(false);
+      setNotice(signOutError ? 'Password updated. Sign out, then sign in with your new password.' : 'Password updated. Sign in with your new password.');
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not update password'); }
+    finally { setBusy(false); }
+  }
+
+  async function changeAccountPassword(event: React.FormEvent) {
+    event.preventDefault(); setBusy(true); setChangeError(''); setNotice('');
+    try {
+      if (newPassword.length < 8) throw new Error('Use at least 8 characters for your new password');
+      if (newPassword !== confirmPassword) throw new Error('New passwords do not match');
+      if (newPassword === currentPassword) throw new Error('Choose a different password');
+      if (!session?.user.email) throw new Error('This account has no email password to change');
+      const verifier = passwordCheckClient(supabaseUrl, supabaseAnonKey);
+      const { data: verified, error: verifyError } = await verifier.auth.signInWithPassword({ email: session.user.email, password: currentPassword });
+      if (verifyError || verified.user?.id !== session.user.id) throw new Error('Current password is incorrect');
+      await verifier.auth.signOut({ scope: 'local' });
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword, current_password: currentPassword,
+        ...(changeNonce ? { nonce: changeNonce.trim() } : {}),
+      });
+      if (error) throw error;
+      setCurrentPassword(''); setNewPassword(''); setConfirmPassword(''); setChangeNonce(''); setChangeCodeSent(false);
+      setNotice('Password changed');
+    } catch (caught) { setChangeError(caught instanceof Error ? caught.message : 'Could not change password'); }
+    finally { setBusy(false); }
+  }
+
+  async function sendPasswordChangeCode() {
+    setBusy(true); setChangeError('');
+    try {
+      const { error } = await supabase.auth.reauthenticate();
+      if (error) throw error;
+      setChangeCodeSent(true);
+      setNotice('A verification code was sent to your email');
+    } catch (caught) { setChangeError(caught instanceof Error ? caught.message : 'Could not send verification code'); }
     finally { setBusy(false); }
   }
 
@@ -684,21 +754,32 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
 
   if (!ready) return <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><CircularProgress aria-label="Loading Timelogger" /></Box>;
 
+  if (recoveryMode) return <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center', bgcolor: 'grey.50', p: 2 }}>
+    <Card sx={{ width: '100%', maxWidth: 440, borderRadius: 3, boxShadow: 3 }}><CardContent sx={{ p: { xs: 3, sm: 4 } }}><Stack spacing={3}>
+      <Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Timelogger</Typography><Typography color="text.secondary">Reset your password</Typography></Box>
+      {error && <Alert severity="error">{error}</Alert>}
+      {session ? <Box component="form" onSubmit={finishPasswordRecovery}><Stack spacing={2}>
+        <TextField label="New password" type="password" value={recoveryPassword} onChange={(event) => setRecoveryPassword(event.target.value)} required fullWidth autoComplete="new-password" slotProps={{ htmlInput: { minLength: 8 } }} />
+        <TextField label="Confirm new password" type="password" value={recoveryConfirm} onChange={(event) => setRecoveryConfirm(event.target.value)} required fullWidth autoComplete="new-password" slotProps={{ htmlInput: { minLength: 8 } }} />
+        <Button variant="contained" size="large" type="submit" disabled={busy}>Set new password</Button>
+      </Stack></Box> : <><Alert severity="warning">This reset link could not be verified. Request a new link and try again.</Alert><Button onClick={() => { setRecoveryMode(false); setMode('forgot'); setError(''); }}>Request another link</Button></>}
+    </Stack></CardContent></Card>
+  </Box>;
+
   if (!session) return <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center', bgcolor: 'grey.50', p: 2 }}>
     <Card sx={{ width: '100%', maxWidth: 440, borderRadius: 3, boxShadow: 3 }}><CardContent sx={{ p: { xs: 3, sm: 4 } }}>
       <Stack spacing={3}>
         <Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Timelogger</Typography><Typography color="text.secondary">Your time, clearly accounted for.</Typography></Box>
-        <Typography variant="h6">{mode === 'login' ? 'Sign in' : 'Create an account'}</Typography>
+        <Typography variant="h6">{mode === 'login' ? 'Sign in' : mode === 'signup' ? 'Create an account' : 'Forgot your password?'}</Typography>
         {error && <Alert severity="error">{error}</Alert>}
         {notice && <Alert severity="success">{notice}</Alert>}
         <Box component="form" onSubmit={authenticate}><Stack spacing={2}>
           <TextField label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required fullWidth autoComplete="email" />
-          <TextField label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required fullWidth autoComplete={mode === 'login' ? 'current-password' : 'new-password'} slotProps={{ htmlInput: { minLength: 6 } }} />
-          <Button variant="contained" size="large" type="submit" disabled={busy}>{mode === 'login' ? 'Sign in' : 'Sign up'}</Button>
+          {mode !== 'forgot' && <TextField label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required fullWidth autoComplete={mode === 'login' ? 'current-password' : 'new-password'} slotProps={{ htmlInput: { minLength: 6 } }} />}
+          <Button variant="contained" size="large" type="submit" disabled={busy}>{mode === 'login' ? 'Sign in' : mode === 'signup' ? 'Sign up' : 'Send reset link'}</Button>
         </Stack></Box>
-        <Button onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); setNotice(''); }}>
-          {mode === 'login' ? 'Need an account? Sign up' : 'Already have an account? Sign in'}
-        </Button>
+        {mode === 'login' ? <Stack><Button onClick={() => { setMode('forgot'); setError(''); setNotice(''); }}>Forgot password?</Button><Button onClick={() => { setMode('signup'); setError(''); setNotice(''); }}>Need an account? Sign up</Button></Stack>
+          : <Button onClick={() => { setMode('login'); setError(''); setNotice(''); }}>Back to sign in</Button>}
       </Stack>
     </CardContent></Card>
   </Box>;
@@ -812,6 +893,16 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
       </Stack></Box>}
       {view === 'settings' && <Box role="tabpanel" id="panel-settings" aria-labelledby="tab-settings"><Stack spacing={3}>
         <Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Settings</Typography><Typography color="text.secondary">Manage integration access to your account.</Typography></Box>
+      <Paper variant="outlined" sx={{ borderRadius: 3, p: 3 }}><Box component="form" onSubmit={changeAccountPassword}><Stack spacing={2}>
+        <Box><Typography variant="h6" sx={{ fontWeight: 700 }}>Change password</Typography><Typography color="text.secondary">Enter your current password and choose a new one.</Typography></Box>
+        <TextField label="Current password" type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} required fullWidth autoComplete="current-password" />
+        <TextField label="New password" type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} required fullWidth autoComplete="new-password" slotProps={{ htmlInput: { minLength: 8 } }} />
+        <TextField label="Confirm new password" type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} required fullWidth autoComplete="new-password" slotProps={{ htmlInput: { minLength: 8 } }} />
+        {changeCodeSent && <TextField label="Email verification code" value={changeNonce} onChange={(event) => setChangeNonce(event.target.value)} required fullWidth autoComplete="one-time-code" />}
+        {changeError && <Alert severity="error">{changeError}</Alert>}
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}><Button variant="contained" type="submit" disabled={busy || (changeCodeSent && !changeNonce.trim())}>Change password</Button><Button type="button" onClick={() => void sendPasswordChangeCode()} disabled={busy}>Send verification code</Button></Stack>
+        <Typography variant="body2" color="text.secondary">Use the email code if Supabase requires reauthentication for this session.</Typography>
+      </Stack></Box></Paper>
       <Paper variant="outlined" sx={{ borderRadius: 3, p: 3 }}><Stack spacing={2}>
         <Box><Typography variant="h6" sx={{ fontWeight: 700 }}>Direct Google Calendar</Typography><Typography color="text.secondary">Connect your Google account to create, update, and delete Calendar events when completed time entries change. Timers sync after you stop them.</Typography></Box>
         {googleConnection ? <>

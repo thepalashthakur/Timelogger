@@ -7,7 +7,7 @@ A Vercel ready Next.js time tracker using Supabase Auth, Supabase Postgres, and 
 These steps use the existing Supabase project and the Vercel project connected to this repository. The Jira issue panel is a separate Forge deployment described below.
 
 1. **Apply the database migrations.** In the Supabase SQL Editor, review and run `supabase/schema.sql`, then `supabase/api_tokens.sql`, then `supabase/catalog.sql`, then `supabase/calendar_sync.sql`, then `supabase/calendar_webhook.sql`, then `supabase/google_calendar.sql` for a new Timelogger installation. For an existing installation, apply only migrations that have not yet been run; v0.8 adds `supabase/google_calendar.sql`. The migrations create only `timelogger_` objects and do not alter existing tables or data. Do not rerun a migration that has already been applied.
-2. **Configure Supabase Auth.** Enable email/password sign-in. Set the Auth site URL to your deployed web app URL (currently `https://timelogger-gilt.vercel.app`). If you use email confirmations, configure the allowed redirect URLs for the deployed domain and `http://localhost:3000` for local development.
+2. **Configure Supabase Auth.** Enable email/password sign-in and **Confirm email**. Set Authentication → URL Configuration → Site URL to your deployed web app URL (currently `https://timelogger-gilt.vercel.app`). Add redirect URLs for localhost or previews only if you explicitly route auth emails there. Configure an email sender that can deliver confirmation and password reset emails.
 3. **Set the Vercel environment variables.** In the Timelogger project's Vercel settings, add `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` to the Production environment. Use the Supabase project URL, its anon/publishable key, and its service role key respectively. The service role key is required for personal API tokens and stays server-side; never put it in browser code or Forge. Add the same values to Preview only if you deploy previews. Redeploy after changing environment variables.
 4. **Check the app locally.** From the repository root, copy `.env.example` to `.env.local`, fill in the three values, then run:
 
@@ -21,6 +21,12 @@ These steps use the existing Supabase project and the Vercel project connected t
 5. **Release to Vercel.** Push the commit to the Git branch connected to Vercel production (`main` for this project): `git push origin main`. Vercel builds and deploys that commit automatically. In Vercel **Deployments**, wait for the production deployment to show **Ready** and check that its commit matches the one you pushed. Open `https://timelogger-gilt.vercel.app`, sign in, and verify a timer and a time entry. For v0.5, open **Projects & tags** and verify that its catalog loads. Use **Import existing entries** there if you want to populate managed projects and tasks from older entries.
 
 For local development, `.env.local` is ignored by Git. Do not commit keys or personal API tokens. A successful Vercel deployment does not update the Jira app; deploy Forge separately.
+
+## Password recovery
+
+On the sign-in screen, **Forgot password?** asks Supabase to send a reset email. Supabase uses the project's **Site URL** as the return address; Timelogger does not supply a separate reset redirect URL. Opening the link shows a new-password form, then signs the user out so they can sign in with the new password. The message after requesting a link is the same whether or not the email belongs to an account.
+
+Signed-in users can change their password in **Settings**. They must provide their current password; Timelogger verifies it using a separate, nonpersistent Supabase client before applying the change. If Supabase requires reauthentication for an older session, **Send verification code** emails a code to enter with the change. No Timelogger database migration is required.
 
 ## Deploy the Jira issue panel
 
