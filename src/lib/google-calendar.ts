@@ -53,6 +53,22 @@ export async function connectedCalendars(userId: string) {
   return ownedGoogleCalendars(await refreshGoogleAccessToken(connection.refresh_token_encrypted));
 }
 
+export async function createGoogleCalendar(userId: string, name: string) {
+  const connection = await googleConnection(userId);
+  if (!connection) throw new Error('Connect Google Calendar first');
+  const token = await refreshGoogleAccessToken(connection.refresh_token_encrypted);
+  const created = await googleRequest(token, 'calendars', {
+    method: 'POST', body: JSON.stringify({ summary: name }),
+  });
+  if (typeof created.id !== 'string' || !created.id) throw new Error('Google did not return a Calendar ID');
+  const calendar = { id: created.id, summary: typeof created.summary === 'string' ? created.summary : name };
+  const { error } = await adminClient().from('timelogger_google_connections')
+    .update({ calendar_id: calendar.id, calendar_name: calendar.summary, updated_at: new Date().toISOString() })
+    .eq('user_id', userId);
+  if (error) throw new Error(`Calendar created, but Timelogger could not select it: ${error.message}`);
+  return calendar;
+}
+
 export async function queueGoogleUpsert(userId: string, entry: TimeEntry) {
   if (entry.status !== 'stopped' || !entry.end_at) return null;
   const existing = await googleSyncRow(userId, entry.id);

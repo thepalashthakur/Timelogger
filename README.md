@@ -48,12 +48,14 @@ The Jira Cloud issue panel lives in [`forge/`](forge/README.md). It requires sep
 
 ### Direct Google connection (v0.8)
 
-1. In Google Cloud Console, create or select a project, enable the Google Calendar API, and configure the OAuth consent screen. Add the scopes `https://www.googleapis.com/auth/calendar.events.owned` and `https://www.googleapis.com/auth/calendar.calendarlist.readonly`. Add yourself as a test user while the app is in Testing. For use by other accounts, complete Google's OAuth publication and verification requirements. Refresh tokens issued while the app is in Testing may expire after seven days.
+1. In Google Cloud Console, create or select a project, enable the Google Calendar API, and configure the OAuth consent screen. Add the scopes `https://www.googleapis.com/auth/calendar.events.owned`, `https://www.googleapis.com/auth/calendar.calendarlist.readonly`, and `https://www.googleapis.com/auth/calendar.calendars`. Add yourself as a test user while the app is in Testing. For use by other accounts, complete Google's OAuth publication and verification requirements. Refresh tokens issued while the app is in Testing may expire after seven days.
 2. Create an OAuth client of type **Web application**. Register `https://timelogger-gilt.vercel.app/api/google/callback` as an authorized redirect URI. For local development, also register `http://localhost:3000/api/google/callback` or use a separate local OAuth client.
 3. Apply `supabase/google_calendar.sql` in the existing Supabase project's SQL Editor. It creates only new prefixed tables. Set these **server-side** Vercel environment variables: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI=https://timelogger-gilt.vercel.app/api/google/callback`, and `GOOGLE_TOKEN_ENCRYPTION_KEY`. Generate the last value with `openssl rand -base64 32`, save it securely, and keep the same value across redeployments. Never expose the client secret or encryption key in browser code.
 4. Redeploy the web app, sign in, then open **Settings → Direct Google Calendar → Connect Google Calendar**. Grant access and choose one of your owned calendars. Create a completed entry or stop a timer, then verify its event. You can open the event from the time entry list or timeline. Editing and deleting the entry update and delete its Google event. Failed changes appear in Settings with **Retry**.
 
 Direct Google sync is one-way from Timelogger to Google Calendar. Running and paused timers sync after stop. The connection uses an encrypted per-user refresh token. New entries use the direct connection while it is active; entries already linked to Apps Script continue to use Apps Script. Changing the selected calendar affects only new entries. Disconnecting direct Google access stops sync for its linked entries until that user reconnects; it does not delete events already in Google Calendar.
+
+From v0.9, **Settings → Direct Google Calendar → Create calendar** creates a secondary calendar in the connected Google account and selects it for future entries. If the account connected before v0.9, click **Reconnect** first to grant the new `calendar.calendars` permission. No additional database migration is needed for calendar creation.
 
 ### Apps Script connection (still supported)
 
@@ -96,7 +98,7 @@ data is restricted to that user. Personal tokens cannot create or revoke tokens.
 | `POST` | `/api/google/connect` | Begin Google OAuth for the signed-in user |
 | `GET` | `/api/google/callback` | Complete Google OAuth redirect |
 | `GET`, `PATCH`, `DELETE` | `/api/google/settings` | Read, choose an owned calendar, or disconnect the direct connection |
-| `GET` | `/api/google/calendars` | List owned Google Calendars |
+| `GET`, `POST` | `/api/google/calendars` | List owned Google Calendars or create and select a secondary calendar with `{ "name": "Timelogger" }` |
 | `GET`, `POST` | `/api/google/sync` | Read or retry direct Calendar deliveries |
 | `GET` | `/api/google/links?ids=<entry-ids>` | Read direct Calendar event links for owned entries |
 

@@ -130,6 +130,17 @@ The separate date and time values are combined in the user's local time zone bef
 
 Direct Google Calendar requires a Google Cloud OAuth client, Calendar API, registered redirect URI, and four server-side environment variables. Google edits do not sync back to Timelogger. Existing Calendar events are not imported automatically.
 
+## v0.9 — create Google calendars
+
+| Feature | Status |
+| --- | --- |
+| Create a secondary Google Calendar from Settings | Implemented |
+| Select the new calendar for future time entries | Implemented |
+| Request Google calendar creation permission during OAuth | Implemented |
+| Keep existing synced events on their original calendars | Implemented |
+
+Users connected before v0.9 must reconnect once to grant the new `calendar.calendars` permission. No database migration is needed beyond the v0.8 direct connector migration.
+
 ## v1 — custom time entry properties
 
 | Feature | Status |

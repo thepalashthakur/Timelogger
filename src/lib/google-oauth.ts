@@ -4,6 +4,7 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, 
 const scopes = [
   'https://www.googleapis.com/auth/calendar.events.owned',
   'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+  'https://www.googleapis.com/auth/calendar.calendars',
 ];
 
 export const googleOAuthCookie = 'timelogger_google_oauth';

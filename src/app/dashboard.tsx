@@ -137,6 +137,8 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   const [googlePending, setGooglePending] = useState<CalendarSyncRecord[]>([]);
   const [googleError, setGoogleError] = useState('');
   const [googleLinks, setGoogleLinks] = useState<Record<string, string>>({});
+  const [googleCalendarDialog, setGoogleCalendarDialog] = useState(false);
+  const [googleCalendarName, setGoogleCalendarName] = useState('');
   const [manualStartDate, setManualStartDate] = useState<Dayjs | null>(() => dayjs().subtract(1, 'hour'));
   const [manualStartTime, setManualStartTime] = useState<Dayjs | null>(() => dayjs().subtract(1, 'hour'));
   const [manualEndDate, setManualEndDate] = useState<Dayjs | null>(() => dayjs());
@@ -542,6 +544,18 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     finally { setBusy(false); }
   }
 
+  async function createCalendar(event: React.FormEvent) {
+    event.preventDefault(); setBusy(true); setGoogleError('');
+    try {
+      const data = await request('/api/google/calendars', { method: 'POST', body: JSON.stringify({ name: googleCalendarName.trim() }) });
+      setGoogleConnection(data.connection);
+      setGoogleCalendarDialog(false); setGoogleCalendarName('');
+      setNotice(`Created and selected ${data.calendar.summary}`);
+      void refreshGoogle();
+    } catch (caught) { setGoogleError(caught instanceof Error ? caught.message : 'Could not create Calendar'); }
+    finally { setBusy(false); }
+  }
+
   async function disconnectGoogle() {
     setBusy(true); setGoogleError('');
     try {
@@ -803,9 +817,11 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
         {googleConnection ? <>
           <Alert severity="success">Connected. New entries use {googleConnection.calendar_name}. Existing Apps Script events continue syncing through Apps Script.</Alert>
           <TextField select label="Calendar for new entries" value={googleConnection.calendar_id} onChange={(event) => void selectGoogleCalendar(event.target.value)} disabled={busy} fullWidth>
+            {!googleCalendars.some((calendar) => calendar.id === googleConnection.calendar_id) && <MenuItem value={googleConnection.calendar_id}>{googleConnection.calendar_name}</MenuItem>}
             {googleCalendars.map((calendar) => <MenuItem key={calendar.id} value={calendar.id}>{calendar.summary}{calendar.primary ? ' (primary)' : ''}</MenuItem>)}
           </TextField>
-          <Stack direction="row" spacing={1}><Button variant="outlined" onClick={() => void connectGoogle()} disabled={busy}>Reconnect</Button><Button color="error" onClick={() => void disconnectGoogle()} disabled={busy}>Disconnect</Button></Stack>
+          <Stack direction="row" spacing={1}><Button variant="contained" onClick={() => { setGoogleError(''); setGoogleCalendarDialog(true); }} disabled={busy}>Create calendar</Button><Button variant="outlined" onClick={() => void connectGoogle()} disabled={busy}>Reconnect</Button><Button color="error" onClick={() => void disconnectGoogle()} disabled={busy}>Disconnect</Button></Stack>
+          <Typography variant="body2" color="text.secondary">Connected before calendar creation was added? Reconnect once to grant the new Google permission.</Typography>
         </> : <Button variant="contained" onClick={() => void connectGoogle()} disabled={busy}>Connect Google Calendar</Button>}
         {googleError && <Alert severity="error">{googleError}</Alert>}
         {googlePending.length > 0 && <Alert severity="warning" action={<Button color="inherit" size="small" onClick={() => void retryGoogleSync()} disabled={busy || !googleConnection}>Retry</Button>}>
@@ -863,6 +879,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
       {selectedTimelineEntry && <Stack direction="row" spacing={0.5}>{entryTags(selectedTimelineEntry.id).map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={{ bgcolor: tag.color, color: 'white' }} />)}</Stack>}
       {selectedTimelineEntry && <><Typography>Started: {new Date(selectedTimelineEntry.start_at).toLocaleString()}</Typography><Typography>{selectedTimelineEntry.end_at ? `Ended: ${new Date(selectedTimelineEntry.end_at).toLocaleString()}` : `Status: ${selectedTimelineEntry.status}`}</Typography><Typography sx={{ fontVariantNumeric: 'tabular-nums' }}>Tracked: {duration(currentDuration(selectedTimelineEntry, now))}</Typography></>}
     </Stack></DialogContent><DialogActions>{selectedTimelineEntry && <>{googleLinks[selectedTimelineEntry.id] && <Button href={googleLinks[selectedTimelineEntry.id]} target="_blank" rel="noopener noreferrer">Calendar event</Button>}<Button onClick={() => openEdit(selectedTimelineEntry)}>Edit</Button><Button color="error" onClick={() => { setEntryDialogError(''); setDeletingEntry(selectedTimelineEntry); setSelectedTimelineEntry(null); }}>Delete</Button></>}<Button onClick={() => setSelectedTimelineEntry(null)}>Close</Button></DialogActions></Dialog>
+    <Dialog open={googleCalendarDialog} onClose={() => { if (!busy) setGoogleCalendarDialog(false); }} fullWidth maxWidth="xs"><Box component="form" onSubmit={createCalendar}><DialogTitle>Create Google Calendar</DialogTitle><DialogContent><Stack spacing={2} sx={{ pt: 1 }}><Typography variant="body2" color="text.secondary">The new calendar will belong to your connected Google account and will be selected for future entries.</Typography><TextField label="Calendar name" value={googleCalendarName} onChange={(event) => setGoogleCalendarName(event.target.value)} required autoFocus fullWidth slotProps={{ htmlInput: { maxLength: 255 } }} />{googleError && <Alert severity="error">{googleError}</Alert>}</Stack></DialogContent><DialogActions><Button onClick={() => setGoogleCalendarDialog(false)} disabled={busy}>Cancel</Button><Button type="submit" variant="contained" disabled={busy || !googleCalendarName.trim()}>Create</Button></DialogActions></Box></Dialog>
     <Dialog open={!!editingEntry} onClose={() => { if (!busy) setEditingEntry(null); }} fullWidth maxWidth="sm"><Box component="form" onSubmit={updateEntry}><DialogTitle>Edit time entry</DialogTitle><DialogContent><Stack spacing={2} sx={{ pt: 1 }}>
       {catalogReady ? <><TextField select label="Project" value={editProject} onChange={(e) => { setEditProject(e.target.value); setEditTask(''); }} fullWidth><MenuItem value="">No project</MenuItem>{projects.filter((item) => !item.archived || item.key === editProject).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{editProject && !projects.some((item) => item.key === editProject) && <MenuItem value={editProject}>{editProject} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('project', 'edit')}>New project</Button><TextField select label="Task" value={editTask} onChange={(e) => setEditTask(e.target.value)} fullWidth><MenuItem value="">No task</MenuItem>{tasks.filter((item) => (!item.archived || item.key === editTask) && item.project_id === projects.find((record) => record.key === editProject)?.id).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{editTask && !tasks.some((item) => item.key === editTask && item.project_id === projects.find((record) => record.key === editProject)?.id) && <MenuItem value={editTask}>{editTask} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('task', 'edit')} disabled={!projects.some((item) => item.key === editProject)}>New task</Button></> : <><TextField label="Project" value={editProject} onChange={(e) => setEditProject(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /><TextField label="Task" value={editTask} onChange={(e) => setEditTask(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /></>}
       <TextField label="Description" value={editDescription} onChange={(e) => setEditDescription(e.target.value)} fullWidth multiline minRows={2} slotProps={{ htmlInput: { maxLength: 500 } }} />
