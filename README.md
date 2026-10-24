@@ -39,10 +39,11 @@ npm --prefix static install
 npm run build
 npx forge login
 npx forge lint
-npx forge deploy --environment development
+npx forge deploy --environment development --approve MAJOR_VERSION_RULE
+npx forge install --upgrade --site projects-1.atlassian.net --product Jira --environment development
 ```
 
-`forge login` asks for the Atlassian account email and its Forge CLI API token. The repository's `.env` is not loaded automatically by Forge. **v0.11 adds the `read:jira-work` scope**, so run `npx forge install --upgrade --site projects-1.atlassian.net --product Jira --environment development` after deployment to grant it. Open a Jira issue and expand **Timelogger** to verify it. In the web app's **Settings**, create a Timelogger personal API token and paste it into the Jira panel when prompted; this is different from the Forge CLI token.
+`forge login` asks for the Atlassian account email and its Forge CLI API token. The repository's `.env` is not loaded automatically by Forge. **v0.11 adds the `read:jira-work` scope**. The Forge linter reports `MAJOR_VERSION_RULE` approval for this permission change; `--approve MAJOR_VERSION_RULE` acknowledges the major version during deployment. The following `install --upgrade` applies the new permission to the existing Jira installation and may require Jira administrator consent. Open a Jira issue and expand **Timelogger** to verify it. In the web app's **Settings**, create a Timelogger personal API token and paste it into the Jira panel when prompted; this is different from the Forge CLI token.
 
 ## Nested Jira tasks (v0.11)
 

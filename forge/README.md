@@ -20,10 +20,11 @@ npm --prefix static install
 npm run build
 npx forge login
 npx forge lint
-npx forge deploy --environment development
+npx forge deploy --environment development --approve MAJOR_VERSION_RULE
+npx forge install --upgrade --site projects-1.atlassian.net --product Jira --environment development
 ```
 
-The app ID in `manifest.yml` is already registered, so do not run `forge register` for this installation. This version requires the `read:jira-work` Jira scope. Run `npx forge install --upgrade --site projects-1.atlassian.net --product Jira --environment development` after deploying, and approve it as a Jira site administrator. A first installation on another Jira site uses `npx forge install --site <site>.atlassian.net --product Jira --environment development` after deployment.
+The app ID in `manifest.yml` is already registered, so do not run `forge register` for this installation. This version requires the `read:jira-work` Jira scope. The `MAJOR_VERSION_RULE` linter approval is expected; `--approve MAJOR_VERSION_RULE` acknowledges the permission change during deployment. The subsequent installation upgrade applies it to the site and may require Jira administrator consent. A first installation on another Jira site uses `npx forge install --site <site>.atlassian.net --product Jira --environment development` after deployment.
 
 The manifest allows outbound requests to the deployed Timelogger origin. The `TIMELOGGER_API_ORIGIN` runtime variable tells the resolver where to send them. For a new Forge environment, set it before deploying: `npx forge variables set --environment development TIMELOGGER_API_ORIGIN https://timelogger-gilt.vercel.app`. After changing the origin, update both the manifest and runtime variable, then redeploy. Forge variables are scoped to their environment and take effect after deployment.
 
