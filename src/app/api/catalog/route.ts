@@ -10,21 +10,25 @@ export async function GET(req: NextRequest) {
   const auth = await authenticated(req);
   if (!auth) return unauthorized();
   const client = adminClient();
-  const [projects, tasks, tags, hierarchy, totals] = await Promise.all([
+  const [projects, tasks, tags, hierarchy, totals, links] = await Promise.all([
     client.from('timelogger_projects').select('*').eq('user_id', auth.userId).order('name').limit(1000),
     client.from('timelogger_tasks').select('*').eq('user_id', auth.userId).order('name').limit(2000),
     client.from('timelogger_tags').select('*').eq('user_id', auth.userId).order('name').limit(1000),
     client.from('timelogger_task_hierarchy').select('task_id,parent_task_id,issue_type,source').eq('user_id', auth.userId).limit(2000),
     client.rpc('timelogger_task_totals', { p_user_id: auth.userId }),
+    client.from('timelogger_jira_task_links').select('task_id,site_url').eq('user_id', auth.userId).limit(2000),
   ]);
-  const error = projects.error ?? tasks.error ?? tags.error ?? hierarchy.error ?? totals.error;
+  const error = projects.error ?? tasks.error ?? tags.error ?? hierarchy.error ?? totals.error ??
+    (links.error && !['PGRST205', '42P01'].includes(links.error.code) ? links.error : null);
   const metadata = new Map((hierarchy.data ?? []).map((row) => [row.task_id, row]));
+  const jiraSites = new Map((links.data ?? []).map((row) => [row.task_id, row.site_url]));
   return error
     ? NextResponse.json({ error: error.message }, { status: 500 })
     : NextResponse.json({ projects: projects.data, tasks: tasks.data?.map((task) => ({
       ...task, parent_task_id: metadata.get(task.id)?.parent_task_id ?? null,
       issue_type: metadata.get(task.id)?.issue_type ?? 'Task',
       source: metadata.get(task.id)?.source ?? 'manual',
+      jira_site_url: jiraSites.get(task.id) ?? null,
     })), tags: tags.data, totals: totals.data });
 }
 

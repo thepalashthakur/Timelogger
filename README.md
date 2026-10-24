@@ -6,7 +6,7 @@ A Vercel ready Next.js time tracker using Supabase Auth, Supabase Postgres, and 
 
 These steps use the existing Supabase project and the Vercel project connected to this repository. The Jira issue panel is a separate Forge deployment described below.
 
-1. **Apply the database migrations.** In the Supabase SQL Editor, review and run `supabase/schema.sql`, then `supabase/api_tokens.sql`, then `supabase/catalog.sql`, then `supabase/calendar_sync.sql`, then `supabase/calendar_webhook.sql`, then `supabase/google_calendar.sql`, then `supabase/task_hierarchy.sql` for a new Timelogger installation. For an existing installation, apply only migrations that have not yet been run; v0.11 adds `supabase/task_hierarchy.sql`. Apply it **before** deploying v0.11 web code. It creates only new `timelogger_` objects and does not alter existing tables or data. Do not rerun a migration that has already been applied.
+1. **Apply the database migrations.** In the Supabase SQL Editor, review and run `supabase/schema.sql`, then `supabase/api_tokens.sql`, then `supabase/catalog.sql`, then `supabase/calendar_sync.sql`, then `supabase/calendar_webhook.sql`, then `supabase/google_calendar.sql`, then `supabase/task_hierarchy.sql`, then `supabase/jira_task_links.sql` for a new Timelogger installation. For an existing installation, apply only migrations that have not yet been run. The v0.16 Jira link migration creates only a new `timelogger_` table and does not alter existing tables or data. Do not rerun a migration that has already been applied.
 2. **Configure Supabase Auth.** Enable email/password sign-in and **Confirm email**. Set Authentication → URL Configuration → Site URL to your deployed web app URL (currently `https://timelogger-gilt.vercel.app`). Add redirect URLs for localhost or previews only if you explicitly route auth emails there. Configure an email sender that can deliver confirmation and password reset emails.
 3. **Set the Vercel environment variables.** In the Timelogger project's Vercel settings, add `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` to the Production environment. Use the Supabase project URL, its anon/publishable key, and its service role key respectively. The service role key is required for personal API tokens and stays server-side; never put it in browser code or Forge. Add the same values to Preview only if you deploy previews. Redeploy after changing environment variables.
 4. **Check the app locally.** From the repository root, copy `.env.example` to `.env.local`, fill in the three values, then run:
@@ -61,6 +61,8 @@ The **Analytics** tab summarizes tracked time with date, project, nested task, t
 
 The Forge resolver reads `TIMELOGGER_API_ORIGIN`; the outbound domain in `forge/manifest.yml` currently allows `https://timelogger-gilt.vercel.app`. If the web app domain changes, update the manifest origin, run `npx forge variables set --environment development TIMELOGGER_API_ORIGIN https://<your-domain>`, and deploy Forge again. If installing on a different Jira site or environment, use its site host and the same environment consistently for the variable, deployment, and installation. See the [Forge README](forge/README.md) for first-time installation.
 
+For v0.16 Jira issue links, apply `supabase/jira_task_links.sql` and deploy the updated Forge app after the web app. Start a timer from a Jira issue to sync its site URL. That issue and its Jira ancestors then show **Open in Jira** chips in the task catalog and entry details. Older Jira tasks acquire links when synced again. A child created directly in Timelogger does not create a Jira issue or receive a Jira link.
+
 The API accepts a Supabase access token or personal API token in `Authorization: Bearer <token>`. See `FEATURES.md` for release scope.
 
 The Jira Cloud issue panel lives in [`forge/`](forge/README.md). It requires separate Forge registration and installation.
@@ -108,11 +110,11 @@ data is restricted to that user. Personal tokens cannot create or revoke tokens.
 | `PATCH` | `/api/entries/{id}` | Update project, task, or description on any entry; completed entries also support start/end changes that recalculate duration |
 | `DELETE` | `/api/entries/{id}` | Delete an entry; deleting a running or paused entry removes its active timer |
 | `GET` | `/api/timeline?from=<ISO>&to=<ISO>` | Entries overlapping a period of up to 32 days; returns `entries`, `count`, and `truncated` (500 entry limit) |
-| `GET` | `/api/catalog` | Managed projects, tasks (including `parent_task_id` and `issue_type`), tags, and direct task time totals |
+| `GET` | `/api/catalog` | Managed projects, tasks (including `parent_task_id`, `issue_type`, and `jira_site_url`), tags, and direct task time totals |
 | `POST` | `/api/catalog` | Create `{ "kind": "project" | "task" | "tag", "name": "...", ... }`; tasks may include `parent_task_id` and `issue_type` |
 | `POST` | `/api/catalog/import` | Add managed projects and tasks from the user's existing entries without changing those entries |
 | `PATCH` | `/api/catalog/{projects|tasks|tags}/{id}` | Rename or change color; archive/restore projects and tasks; reparent or change task type |
-| `POST` | `/api/catalog/jira` | Sync a Jira issue ancestry chain; the Forge resolver uses the user's personal token |
+| `POST` | `/api/catalog/jira` | Sync a Jira issue ancestry chain and its `site_url`; the Forge resolver uses the user's personal token |
 | `DELETE` | `/api/catalog/{projects|tasks|tags}/{id}` | Archive a project/task or permanently delete a tag |
 | `GET` | `/api/entry-tags?ids=<comma-separated-entry-ids>` | Tag IDs assigned to the requested entries |
 | `PUT` | `/api/entry-tags` | Replace an entry's tags with `{ "entry_id": "...", "tag_ids": ["..."] }` |

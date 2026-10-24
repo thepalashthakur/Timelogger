@@ -218,6 +218,18 @@ The profile uses the existing Supabase Auth user record. No database migration i
 
 The signed-in password form shows no email-code action by default. If Supabase returns `reauthentication_needed` for the current session, the form reveals Send verification code and accepts the emailed code for the retry. No database migration is required.
 
+## v0.16 — links back to Jira issues
+
+| Feature | Status |
+| --- | --- |
+| Forge reads the installed Jira site's base URL when syncing an issue hierarchy | Implemented |
+| Save each imported issue's site in a new user-scoped `timelogger_jira_task_links` table | Implemented in `supabase/jira_task_links.sql`; deployment requires applying it |
+| Show an Open in Jira chip on linked tasks in the catalog and entry details | Implemented |
+| Open the issue in a separate browser tab with validated HTTPS Jira URLs | Implemented |
+| Preserve Jira source metadata when editing an imported task in Timelogger | Implemented |
+
+Apply the migration, deploy the web app, then deploy Forge. Existing Jira-sourced tasks get links when their issues are synced again by starting a timer from the Jira panel. Manually created child tasks remain local to Timelogger and have no Jira link.
+
 ## v1 — custom time entry properties
 
 | Feature | Status |

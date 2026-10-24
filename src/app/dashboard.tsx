@@ -20,6 +20,7 @@ import { browserClient, passwordCheckClient, type TimeEntry } from '@/lib/supaba
 import { addDays, layoutDay, startOfWeek } from '@/lib/timeline';
 import { calendarScript } from '@/lib/calendar-script';
 import { findEntryTask, taskLineage } from '@/lib/entry-insights';
+import { jiraIssueUrl } from '@/lib/jira-links';
 import AppearanceControl from './appearance-control';
 
 const Analytics = dynamic(() => import('./analytics'), { ssr: false });
@@ -36,7 +37,7 @@ type GoogleCalendarOption = { id: string; summary: string; primary?: boolean };
 type View = 'dashboard' | 'entries' | 'analytics' | 'catalog' | 'profile' | 'settings';
 type StatusFilter = 'all' | TimeEntry['status'];
 type ProjectRecord = { id: string; key: string; name: string; color: string; archived: boolean };
-type TaskRecord = { id: string; project_id: string; key: string; name: string; archived: boolean; parent_task_id: string | null; issue_type: string; source: 'manual' | 'jira' };
+type TaskRecord = { id: string; project_id: string; key: string; name: string; archived: boolean; parent_task_id: string | null; issue_type: string; source: 'manual' | 'jira'; jira_site_url: string | null };
 type TagRecord = { id: string; name: string; color: string };
 type CatalogKind = 'project' | 'task' | 'tag';
 const pageSize = 20;
@@ -506,7 +507,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
         const next = new Set(visited); next.add(item.id);
         return <Box key={item.id} sx={{ borderTop: 1, borderColor: 'divider', py: 1, pl: parentId ? 2 : 0 }}>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between' }}>
-            <Box><Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><Typography sx={{ fontWeight: 600 }}>{item.name}</Typography><Chip size="small" variant="outlined" label={item.issue_type} />{item.archived && <Chip size="small" label="Archived" />}</Stack><Typography variant="body2" color="text.secondary">{item.key} · {duration(taskTotals[item.id] ?? 0)} direct · {duration([...taskDescendants(item.id)].reduce((total, taskId) => total + (taskTotals[taskId] ?? 0), 0))} with children</Typography></Box>
+            <Box><Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}><Typography sx={{ fontWeight: 600 }}>{item.name}</Typography><Chip size="small" variant="outlined" label={item.issue_type} />{jiraIssueUrl(item.jira_site_url, item.key) && <Chip size="small" component="a" clickable href={jiraIssueUrl(item.jira_site_url, item.key)!} target="_blank" rel="noopener noreferrer" label="Open in Jira" aria-label={`Open ${item.key} in Jira`} color="primary" variant="outlined" />}{item.archived && <Chip size="small" label="Archived" />}</Stack><Typography variant="body2" color="text.secondary">{item.key} · {duration(taskTotals[item.id] ?? 0)} direct · {duration([...taskDescendants(item.id)].reduce((total, taskId) => total + (taskTotals[taskId] ?? 0), 0))} with children</Typography></Box>
             <Stack direction="row" spacing={1}><Button size="small" onClick={() => { openCatalog('task'); setCatalogProjectId(projectId); setCatalogParentTaskId(item.id); setCatalogIssueType('Subtask'); }}>Add child</Button><Button size="small" onClick={() => openCatalog('task', 'catalog', item)}>Edit</Button><Button size="small" onClick={() => void changeCatalogState('task', item.id, item.archived)} disabled={busy}>{item.archived ? 'Restore' : 'Archive'}</Button></Stack>
           </Stack>{taskTree(projectId, item.id, next)}
         </Box>;
@@ -1126,7 +1127,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
           {entryTask && focusedTask?.id !== entryTask.id && <Button size="small" sx={{ alignSelf: 'flex-start' }} onClick={() => setDetailFocusTaskId(entryTask.id)}>Back to entry task: {entryTask.name}</Button>}
           {!entryTask && selectedTimelineEntry.task && <Alert severity="info">This entry has no matching catalog task yet. Import existing entries in Projects, tasks & tags to browse its hierarchy.</Alert>}
           {detailProject && <><Divider />
-            <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', alignItems: 'center' }}><Typography sx={{ fontWeight: 700 }}>{focusedTask?.name ?? detailProject.name}</Typography>{focusedTask && <Chip size="small" variant="outlined" label={focusedTask.issue_type} />}{focusedTask?.id === entryTask?.id && <Chip size="small" color="primary" label="Entry task" />}</Stack>
+            <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', alignItems: 'center' }}><Typography sx={{ fontWeight: 700 }}>{focusedTask?.name ?? detailProject.name}</Typography>{focusedTask && <Chip size="small" variant="outlined" label={focusedTask.issue_type} />}{focusedTask && jiraIssueUrl(focusedTask.jira_site_url, focusedTask.key) && <Chip size="small" component="a" clickable href={jiraIssueUrl(focusedTask.jira_site_url, focusedTask.key)!} target="_blank" rel="noopener noreferrer" label="Open in Jira" aria-label={`Open ${focusedTask.key} in Jira`} color="primary" variant="outlined" />}{focusedTask?.id === entryTask?.id && <Chip size="small" color="primary" label="Entry task" />}</Stack>
             <Typography variant="body2" color="text.secondary">{focusedTask?.key ?? detailProject.key}{focusedTask?.source === 'jira' ? ' · Jira issue' : ''}{focusedTask?.archived ? ' · Archived' : ''}</Typography>
             <Typography variant="body2">{focusedTask ? `All-time direct: ${duration(focusDirectSeconds)} · Including nested tasks: ${duration(focusTotalSeconds)}` : `All-time project time: ${duration(focusTotalSeconds)}`}</Typography>
             {focusChildren.length > 0 && <><Typography variant="subtitle2">{focusedTask ? 'Child tasks' : 'Root tasks'} ({focusChildren.length})</Typography><Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 0.5 }}>{focusChildren.slice(0, 20).map((child) => <Link key={child.id} component="button" type="button" underline="hover" onClick={() => setDetailFocusTaskId(child.id)}>{child.name}</Link>)}</Stack>{focusChildren.length > 20 && <Typography variant="body2" color="text.secondary">Showing 20 tasks. Open the task catalog for the full tree.</Typography>}</>}

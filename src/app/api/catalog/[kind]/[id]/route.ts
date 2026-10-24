@@ -39,10 +39,10 @@ export async function PATCH(req: NextRequest, { params }: Context) {
     : await client.from(table).select('*').eq('id', id).eq('user_id', auth.userId).maybeSingle();
   if (error) return badRequest(error.code === '23505' ? 'Name already exists' : error.message);
   if (data && hierarchyChange) {
-    const current = await client.from('timelogger_task_hierarchy').select('parent_task_id,issue_type').eq('task_id', id).eq('user_id', auth.userId).maybeSingle();
+    const current = await client.from('timelogger_task_hierarchy').select('parent_task_id,issue_type,source').eq('task_id', id).eq('user_id', auth.userId).maybeSingle();
     if (current.error) return badRequest(current.error.message);
     try { await setTaskHierarchy(auth.userId, id, body.parent_task_id === undefined ? current.data?.parent_task_id ?? null : body.parent_task_id,
-      body.issue_type === undefined ? current.data?.issue_type ?? 'Task' : body.issue_type, 'manual'); }
+      body.issue_type === undefined ? current.data?.issue_type ?? 'Task' : body.issue_type, current.data?.source === 'jira' ? 'jira' : 'manual'); }
     catch (caught) { return badRequest(caught instanceof Error ? caught.message : 'Invalid hierarchy'); }
   }
   return data ? NextResponse.json({ item: data }) : notFound();

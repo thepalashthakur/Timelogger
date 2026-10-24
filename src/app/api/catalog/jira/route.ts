@@ -3,6 +3,7 @@ import { authenticated, badRequest, unauthorized } from '@/lib/api';
 import { adminClient } from '@/lib/admin';
 import { ensureJiraCatalog } from '@/lib/catalog';
 import { setTaskHierarchy } from '@/lib/task-hierarchy';
+import { jiraIssueUrl } from '@/lib/jira-links';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,8 +25,11 @@ export async function POST(req: NextRequest) {
       && typeof value.issue_type === 'string' && value.issue_type.trim().length > 0 && value.issue_type.trim().length <= 100;
   });
   if (!valid || new Set(nodes.map((node: JiraNode) => node.key)).size !== nodes.length) return badRequest('Invalid Jira hierarchy');
+  const siteUrl = (body as { site_url?: unknown }).site_url;
+  if (siteUrl !== undefined && !jiraIssueUrl(siteUrl, (nodes.at(-1) as JiraNode).key)) return badRequest('Invalid Jira site URL');
   const client = adminClient();
   let parent: { id: string; project_id: string } | null = null;
+  const linkedTaskIds: string[] = [];
   try {
     for (const node of nodes as JiraNode[]) {
       await ensureJiraCatalog(auth.userId, node.project_key, node.key);
@@ -39,7 +43,14 @@ export async function POST(req: NextRequest) {
       }
       await setTaskHierarchy(auth.userId, task.data.id,
         parent && parent.project_id === task.data.project_id ? parent.id : null, node.issue_type, 'jira');
+      linkedTaskIds.push(task.data.id);
       parent = { id: task.data.id, project_id: task.data.project_id };
+    }
+    if (typeof siteUrl === 'string') {
+      const { error } = await client.from('timelogger_jira_task_links').upsert(linkedTaskIds.map((taskId) => ({
+        task_id: taskId, user_id: auth.userId, site_url: siteUrl, updated_at: new Date().toISOString(),
+      })), { onConflict: 'task_id' });
+      if (error && !['PGRST205', '42P01'].includes(error.code)) throw error;
     }
   } catch (caught) {
     return NextResponse.json({ error: caught instanceof Error ? caught.message : 'Could not sync Jira hierarchy' }, { status: 500 });

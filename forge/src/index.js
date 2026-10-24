@@ -31,6 +31,16 @@ async function jiraHierarchy(issueKey) {
   return nodes.reverse();
 }
 
+async function jiraSiteUrl() {
+  const response = await api.asUser().requestJira(route`/rest/api/3/serverInfo`, {
+    headers: { Accept: 'application/json' },
+  });
+  if (!response.ok) throw new Error(`Could not read Jira site URL (${response.status})`);
+  const info = await response.json();
+  if (typeof info.baseUrl !== 'string') throw new Error('Jira site URL is unavailable');
+  return info.baseUrl;
+}
+
 function userKey(context) {
   const accountId = context?.accountId;
   if (typeof accountId !== 'string' || !accountId) {
@@ -112,9 +122,9 @@ export const handler = makeResolver({
     }
     const token = await storedToken(context);
     if (action === 'start' && jiraKeyPattern.test(body.task)) {
-      const nodes = await jiraHierarchy(body.task);
+      const [nodes, siteUrl] = await Promise.all([jiraHierarchy(body.task), jiraSiteUrl()]);
       if (nodes.at(-1)?.project_key !== body.project) throw new Error('Jira issue project does not match');
-      await request('/api/catalog/jira', token, 'POST', { nodes });
+      await request('/api/catalog/jira', token, 'POST', { nodes, site_url: siteUrl });
     }
     return request('/api/timer', token, 'POST', body);
   },
