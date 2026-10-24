@@ -191,6 +191,18 @@ The entry still stores its stable project and task keys. The dialog resolves tho
 
 See [ANALYTICS.md](ANALYTICS.md) for report semantics, similar-app research, and future analytics scope. No migration is required.
 
+## v0.14 — appearance and dark mode
+
+| Feature | Status |
+| --- | --- |
+| Light and dark MUI color schemes with system preference as the default | Implemented |
+| Appearance choice in the header, Settings, sign-in, and password recovery | Implemented |
+| Save appearance choice in this browser and sync it between tabs | Implemented |
+| Theme-aware pages, timeline, forms, dialogs, and charts | Implemented |
+| Contrast-aware text on user-colored tags | Implemented |
+
+The selected appearance is a browser preference and does not require a database migration.
+
 ## v1 — custom time entry properties
 
 | Feature | Status |
