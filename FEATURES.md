@@ -116,6 +116,20 @@ The browser tab uses the supplied stopwatch image as the app icon.
 
 The separate date and time values are combined in the user's local time zone before sending ISO timestamps to the API. Editing only entry details does not rewrite existing timestamps.
 
+## v0.8 — direct Google Calendar connector
+
+| Feature | Status |
+| --- | --- |
+| Per-user Google OAuth connection with encrypted refresh token | Implemented |
+| Choose an owned Google Calendar for new time entries | Implemented |
+| Create, update, and delete events for completed entries and stopped timers | Implemented |
+| Store Google event ID and web link per time entry | Implemented |
+| Persistent failed delivery status and manual retry | Implemented |
+| Preserve Apps Script sync and keep existing linked entries on that method | Implemented |
+| Additive `timelogger_` database migration | Implemented in `supabase/google_calendar.sql`; deployment requires applying it |
+
+Direct Google Calendar requires a Google Cloud OAuth client, Calendar API, registered redirect URI, and four server-side environment variables. Google edits do not sync back to Timelogger. Existing Calendar events are not imported automatically.
+
 ## v1 — custom time entry properties
 
 | Feature | Status |

@@ -3,7 +3,7 @@ import { authenticated, badRequest, details, unauthorized } from '@/lib/api';
 import { attachTagsToNewEntry, resolveSelection, validateTagIds } from '@/lib/catalog';
 import { uuidPattern } from '@/lib/catalog';
 import { adminClient } from '@/lib/admin';
-import { queueCalendarUpsert } from '@/lib/calendar';
+import { queueCalendarUpsert } from '@/lib/calendar-dispatch';
 import type { TimeEntry } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';

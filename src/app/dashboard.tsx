@@ -26,6 +26,7 @@ type ApiTokenRecord = {
   last_used_at: string | null;
 };
 type CalendarSyncRecord = { entry_id: string; desired_action: 'upsert' | 'delete'; status: 'pending' | 'failed'; last_error: string | null };
+type GoogleCalendarOption = { id: string; summary: string; primary?: boolean };
 type View = 'dashboard' | 'entries' | 'catalog' | 'settings';
 type StatusFilter = 'all' | TimeEntry['status'];
 type ProjectRecord = { id: string; key: string; name: string; color: string; archived: boolean };
@@ -131,6 +132,11 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   const [calendarHasSecret, setCalendarHasSecret] = useState(false);
   const [calendarError, setCalendarError] = useState('');
   const [calendarPending, setCalendarPending] = useState<CalendarSyncRecord[]>([]);
+  const [googleConnection, setGoogleConnection] = useState<{ calendar_id: string; calendar_name: string } | null>(null);
+  const [googleCalendars, setGoogleCalendars] = useState<GoogleCalendarOption[]>([]);
+  const [googlePending, setGooglePending] = useState<CalendarSyncRecord[]>([]);
+  const [googleError, setGoogleError] = useState('');
+  const [googleLinks, setGoogleLinks] = useState<Record<string, string>>({});
   const [manualStartDate, setManualStartDate] = useState<Dayjs | null>(() => dayjs().subtract(1, 'hour'));
   const [manualStartTime, setManualStartTime] = useState<Dayjs | null>(() => dayjs().subtract(1, 'hour'));
   const [manualEndDate, setManualEndDate] = useState<Dayjs | null>(() => dayjs());
@@ -211,6 +217,14 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not load timer'); }
   }, [request, session, loadTagIds]);
 
+  const loadGoogleLinks = useCallback(async (ids: string[]) => {
+    if (!ids.length) return;
+    try {
+      const data = await request(`/api/google/links?${new URLSearchParams({ ids: ids.slice(0, 100).join(',') })}`);
+      setGoogleLinks((previous) => ({ ...previous, ...Object.fromEntries(data.links.filter((link: { html_link: string | null }) => link.html_link).map((link: { entry_id: string; html_link: string }) => [link.entry_id, link.html_link])) }));
+    } catch { /* Calendar links are optional presentation metadata. */ }
+  }, [request]);
+
   const loadEntries = useCallback(async () => {
     if (!session) return;
     const id = ++entryRequestId.current;
@@ -226,13 +240,13 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     if (toDate) params.set('to', dateBoundary(toDate, true));
     try {
       const data = await request(`/api/entries?${params}`);
-      if (id === entryRequestId.current) { setEntries(data.entries); setEntryCount(data.count); void loadTagIds(data.entries.map((item: TimeEntry) => item.id)); }
+      if (id === entryRequestId.current) { setEntries(data.entries); setEntryCount(data.count); void loadTagIds(data.entries.map((item: TimeEntry) => item.id)); void loadGoogleLinks(data.entries.map((item: TimeEntry) => item.id)); }
     } catch (caught) {
       if (id === entryRequestId.current) setEntriesError(caught instanceof Error ? caught.message : 'Could not load entries');
     } finally {
       if (id === entryRequestId.current) setEntriesLoading(false);
     }
-  }, [request, session, page, search, projectFilter, taskFilter, tagFilter, statusFilter, fromDate, toDate, loadTagIds]);
+  }, [request, session, page, search, projectFilter, taskFilter, tagFilter, statusFilter, fromDate, toDate, loadTagIds, loadGoogleLinks]);
 
   const timelineDays = useMemo(() => {
     const first = timelineMode === 'week' ? startOfWeek(timelineAnchor) : new Date(timelineAnchor);
@@ -253,13 +267,14 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
         setTimelineEntries(data.entries);
         setTimelineTruncated(data.truncated);
         void loadTagIds(data.entries.map((item: TimeEntry) => item.id));
+        void loadGoogleLinks(data.entries.map((item: TimeEntry) => item.id));
       }
     } catch (caught) {
       if (id === timelineRequestId.current) setTimelineError(caught instanceof Error ? caught.message : 'Could not load timeline');
     } finally {
       if (id === timelineRequestId.current) setTimelineLoading(false);
     }
-  }, [request, session, timelineDays, loadTagIds]);
+  }, [request, session, timelineDays, loadTagIds, loadGoogleLinks]);
 
   const refreshTokens = useCallback(async () => {
     if (!session) return;
@@ -287,18 +302,38 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     } catch (caught) { setCalendarError(caught instanceof Error ? caught.message : 'Could not load Calendar sync status'); }
   }, [request, session]);
 
+  const refreshGoogle = useCallback(async () => {
+    if (!session) return;
+    try {
+      const [settings, sync] = await Promise.all([request('/api/google/settings'), request('/api/google/sync')]);
+      setGoogleConnection(settings.connection);
+      setGooglePending(sync.pending);
+      setGoogleCalendars(settings.connection ? (await request('/api/google/calendars')).calendars : []);
+      setGoogleError('');
+    } catch (caught) { setGoogleError(caught instanceof Error ? caught.message : 'Could not load Google Calendar'); }
+  }, [request, session]);
+
   useEffect(() => {
-    if (!session) { setEntry(null); setEntries([]); setTimelineEntries([]); setProjects([]); setTasks([]); setTags([]); setCatalogReady(false); setEntryTagIds({}); setApiTokens([]); setNewToken(''); setCalendarUrl(''); setSavedCalendarUrl(''); setCalendarSecret(''); setCalendarHasSecret(false); setCalendarError(''); setCalendarPending([]); entryRequestId.current += 1; timelineRequestId.current += 1; return; }
+    if (!session) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('google_error')) setGoogleError(params.get('google_error') || 'Google connection failed');
+    else if (params.get('google') === 'connected') { setNotice('Google Calendar connected'); void refreshGoogle(); }
+    if (params.has('google') || params.has('google_error')) window.history.replaceState(null, '', `${window.location.pathname}${window.location.hash}`);
+  }, [session, refreshGoogle]);
+
+  useEffect(() => {
+    if (!session) { setEntry(null); setEntries([]); setTimelineEntries([]); setProjects([]); setTasks([]); setCatalogReady(false); setEntryTagIds({}); setApiTokens([]); setNewToken(''); setCalendarUrl(''); setSavedCalendarUrl(''); setCalendarSecret(''); setCalendarHasSecret(false); setCalendarError(''); setCalendarPending([]); setGoogleConnection(null); setGoogleCalendars([]); setGooglePending([]); setGoogleLinks({}); entryRequestId.current += 1; timelineRequestId.current += 1; return; }
     void refreshTimer();
     void refreshTokens();
     void refreshCalendarSettings();
     void refreshCalendarSync();
+    void refreshGoogle();
     const ticker = window.setInterval(() => setNow(Date.now()), 1000);
     const sync = window.setInterval(() => void refreshTimer(), 30000);
     const onFocus = () => void refreshTimer();
     window.addEventListener('focus', onFocus);
     return () => { window.clearInterval(ticker); window.clearInterval(sync); window.removeEventListener('focus', onFocus); };
-  }, [session, refreshTimer, refreshTokens, refreshCalendarSettings, refreshCalendarSync]);
+  }, [session, refreshTimer, refreshTokens, refreshCalendarSettings, refreshCalendarSync, refreshGoogle]);
 
   useEffect(() => {
     if (!session) return;
@@ -486,6 +521,44 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
       await refreshCalendarSync();
       setNotice(`Synced ${data.synced} of ${data.attempted} pending Calendar changes`);
     } catch (caught) { setCalendarError(caught instanceof Error ? caught.message : 'Could not retry Calendar sync'); }
+    finally { setBusy(false); }
+  }
+
+  async function connectGoogle() {
+    setBusy(true); setGoogleError('');
+    try {
+      const data = await request('/api/google/connect', { method: 'POST' });
+      window.location.assign(data.url);
+    } catch (caught) { setGoogleError(caught instanceof Error ? caught.message : 'Could not connect Google Calendar'); setBusy(false); }
+  }
+
+  async function selectGoogleCalendar(calendarId: string) {
+    setBusy(true); setGoogleError('');
+    try {
+      const data = await request('/api/google/settings', { method: 'PATCH', body: JSON.stringify({ calendar_id: calendarId }) });
+      setGoogleConnection(data.connection);
+      setNotice('Calendar selected for new entries');
+    } catch (caught) { setGoogleError(caught instanceof Error ? caught.message : 'Could not select Calendar'); }
+    finally { setBusy(false); }
+  }
+
+  async function disconnectGoogle() {
+    setBusy(true); setGoogleError('');
+    try {
+      await request('/api/google/settings', { method: 'DELETE' });
+      setGoogleConnection(null); setGoogleCalendars([]);
+      setNotice('Direct Google Calendar connection removed');
+    } catch (caught) { setGoogleError(caught instanceof Error ? caught.message : 'Could not disconnect Google Calendar'); }
+    finally { setBusy(false); }
+  }
+
+  async function retryGoogleSync() {
+    setBusy(true); setGoogleError('');
+    try {
+      const data = await request('/api/google/sync', { method: 'POST' });
+      await refreshGoogle();
+      setNotice(`Synced ${data.synced} of ${data.attempted} direct Calendar changes`);
+    } catch (caught) { setGoogleError(caught instanceof Error ? caught.message : 'Could not retry Google Calendar sync'); }
     finally { setBusy(false); }
   }
 
@@ -701,9 +774,9 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
           {!entriesLoading && !entriesError && entries.length === 0 && <Box sx={{ p: 4, textAlign: 'center' }}><Typography variant="h6">No entries found</Typography><Typography color="text.secondary">{search || projectFilter || taskFilter || tagFilter || statusFilter !== 'all' || fromDate || toDate ? 'Try another search or clear the filters.' : 'Start a timer or add time manually to see it here.'}</Typography>{!search && !projectFilter && !taskFilter && !tagFilter && statusFilter === 'all' && !fromDate && !toDate && <Button sx={{ mt: 2 }} onClick={() => navigate('dashboard')}>Go to dashboard</Button>}</Box>}
           {!entriesLoading && !entriesError && entries.length > 0 && <>
             <TableContainer sx={{ display: { xs: 'none', md: 'block' } }}><Table aria-label="Time entries"><TableHead><TableRow><TableCell>Work and actions</TableCell><TableCell>Project</TableCell><TableCell>Started</TableCell><TableCell>Status</TableCell><TableCell align="right">Duration</TableCell></TableRow></TableHead><TableBody>
-              {entries.map((item) => <TableRow key={item.id} hover><TableCell><Typography sx={{ fontWeight: 600 }}>{taskLabel(item.project, item.task) || 'Untitled work'}</Typography>{item.description && <Typography variant="body2" color="text.secondary">{item.description}</Typography>}{entryTags(item.id).map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={{ mr: 0.5, mt: 0.5, bgcolor: tag.color, color: 'white' }} />)}<Stack direction="row" spacing={0.5} sx={{ mt: 0.5 }}><Button size="small" onClick={() => openEdit(item)} aria-label={`Edit ${item.task || 'time entry'}`}>Edit</Button><Button size="small" color="error" onClick={() => { setEntryDialogError(''); setDeletingEntry(item); }} aria-label={`Delete ${item.task || 'time entry'}`}>Delete</Button></Stack></TableCell><TableCell>{projectLabel(item.project) || '—'}</TableCell><TableCell>{new Date(item.start_at).toLocaleString()}</TableCell><TableCell><Chip size="small" label={item.status} color={item.status === 'running' ? 'success' : item.status === 'paused' ? 'warning' : 'default'} /></TableCell><TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{duration(currentDuration(item, now))}</TableCell></TableRow>)}
+              {entries.map((item) => <TableRow key={item.id} hover><TableCell><Typography sx={{ fontWeight: 600 }}>{taskLabel(item.project, item.task) || 'Untitled work'}</Typography>{item.description && <Typography variant="body2" color="text.secondary">{item.description}</Typography>}{entryTags(item.id).map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={{ mr: 0.5, mt: 0.5, bgcolor: tag.color, color: 'white' }} />)}<Stack direction="row" spacing={0.5} sx={{ mt: 0.5 }}>{googleLinks[item.id] && <Button size="small" href={googleLinks[item.id]} target="_blank" rel="noopener noreferrer">Calendar event</Button>}<Button size="small" onClick={() => openEdit(item)} aria-label={`Edit ${item.task || 'time entry'}`}>Edit</Button><Button size="small" color="error" onClick={() => { setEntryDialogError(''); setDeletingEntry(item); }} aria-label={`Delete ${item.task || 'time entry'}`}>Delete</Button></Stack></TableCell><TableCell>{projectLabel(item.project) || '—'}</TableCell><TableCell>{new Date(item.start_at).toLocaleString()}</TableCell><TableCell><Chip size="small" label={item.status} color={item.status === 'running' ? 'success' : item.status === 'paused' ? 'warning' : 'default'} /></TableCell><TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{duration(currentDuration(item, now))}</TableCell></TableRow>)}
             </TableBody></Table></TableContainer>
-            <Stack divider={<Divider />} sx={{ display: { xs: 'flex', md: 'none' } }}>{entries.map((item) => <Box key={item.id} sx={{ p: 2 }}><Stack direction="row" spacing={2} sx={{ justifyContent: 'space-between', alignItems: 'flex-start' }}><Box><Typography sx={{ fontWeight: 600 }}>{taskLabel(item.project, item.task) || 'Untitled work'}</Typography><Typography variant="body2" color="text.secondary">{projectLabel(item.project) || 'No project'} · {new Date(item.start_at).toLocaleString()}</Typography>{item.description && <Typography variant="body2" color="text.secondary">{item.description}</Typography>}{entryTags(item.id).map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={{ mr: 0.5, mt: 0.5, bgcolor: tag.color, color: 'white' }} />)}</Box><Typography sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, whiteSpace: 'nowrap' }}>{duration(currentDuration(item, now))}</Typography></Stack><Chip size="small" label={item.status} color={item.status === 'running' ? 'success' : item.status === 'paused' ? 'warning' : 'default'} sx={{ mt: 1 }} /><Stack direction="row" spacing={1} sx={{ mt: 1 }}><Button size="small" onClick={() => openEdit(item)}>Edit</Button><Button size="small" color="error" onClick={() => { setEntryDialogError(''); setDeletingEntry(item); }}>Delete</Button></Stack></Box>)}</Stack>
+            <Stack divider={<Divider />} sx={{ display: { xs: 'flex', md: 'none' } }}>{entries.map((item) => <Box key={item.id} sx={{ p: 2 }}><Stack direction="row" spacing={2} sx={{ justifyContent: 'space-between', alignItems: 'flex-start' }}><Box><Typography sx={{ fontWeight: 600 }}>{taskLabel(item.project, item.task) || 'Untitled work'}</Typography><Typography variant="body2" color="text.secondary">{projectLabel(item.project) || 'No project'} · {new Date(item.start_at).toLocaleString()}</Typography>{item.description && <Typography variant="body2" color="text.secondary">{item.description}</Typography>}{entryTags(item.id).map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={{ mr: 0.5, mt: 0.5, bgcolor: tag.color, color: 'white' }} />)}</Box><Typography sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, whiteSpace: 'nowrap' }}>{duration(currentDuration(item, now))}</Typography></Stack><Chip size="small" label={item.status} color={item.status === 'running' ? 'success' : item.status === 'paused' ? 'warning' : 'default'} sx={{ mt: 1 }} /><Stack direction="row" spacing={1} sx={{ mt: 1 }}>{googleLinks[item.id] && <Button size="small" href={googleLinks[item.id]} target="_blank" rel="noopener noreferrer">Calendar event</Button>}<Button size="small" onClick={() => openEdit(item)}>Edit</Button><Button size="small" color="error" onClick={() => { setEntryDialogError(''); setDeletingEntry(item); }}>Delete</Button></Stack></Box>)}</Stack>
           </>}
           {!entriesLoading && !entriesError && entryCount > pageSize && <Box sx={{ p: 2, display: 'flex', justifyContent: 'center' }}><Pagination count={Math.ceil(entryCount / pageSize)} page={page} onChange={(_event, next) => setPage(next)} showFirstButton showLastButton color="primary" aria-label="Time entry pages" /></Box>}
         </Stack></Paper>
@@ -726,7 +799,21 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
       {view === 'settings' && <Box role="tabpanel" id="panel-settings" aria-labelledby="tab-settings"><Stack spacing={3}>
         <Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Settings</Typography><Typography color="text.secondary">Manage integration access to your account.</Typography></Box>
       <Paper variant="outlined" sx={{ borderRadius: 3, p: 3 }}><Stack spacing={2}>
-        <Box><Typography variant="h6" sx={{ fontWeight: 700 }}>Google Calendar</Typography><Typography color="text.secondary">Deploy the Apps Script in your own Google account, then save its Web app URL here. Completed time entries will sync to your calendar.</Typography></Box>
+        <Box><Typography variant="h6" sx={{ fontWeight: 700 }}>Direct Google Calendar</Typography><Typography color="text.secondary">Connect your Google account to create, update, and delete Calendar events when completed time entries change. Timers sync after you stop them.</Typography></Box>
+        {googleConnection ? <>
+          <Alert severity="success">Connected. New entries use {googleConnection.calendar_name}. Existing Apps Script events continue syncing through Apps Script.</Alert>
+          <TextField select label="Calendar for new entries" value={googleConnection.calendar_id} onChange={(event) => void selectGoogleCalendar(event.target.value)} disabled={busy} fullWidth>
+            {googleCalendars.map((calendar) => <MenuItem key={calendar.id} value={calendar.id}>{calendar.summary}{calendar.primary ? ' (primary)' : ''}</MenuItem>)}
+          </TextField>
+          <Stack direction="row" spacing={1}><Button variant="outlined" onClick={() => void connectGoogle()} disabled={busy}>Reconnect</Button><Button color="error" onClick={() => void disconnectGoogle()} disabled={busy}>Disconnect</Button></Stack>
+        </> : <Button variant="contained" onClick={() => void connectGoogle()} disabled={busy}>Connect Google Calendar</Button>}
+        {googleError && <Alert severity="error">{googleError}</Alert>}
+        {googlePending.length > 0 && <Alert severity="warning" action={<Button color="inherit" size="small" onClick={() => void retryGoogleSync()} disabled={busy || !googleConnection}>Retry</Button>}>
+          {googlePending.length} direct Calendar change{googlePending.length === 1 ? '' : 's'} need syncing. {googlePending[0]?.last_error ?? ''}
+        </Alert>}
+      </Stack></Paper>
+      <Paper variant="outlined" sx={{ borderRadius: 3, p: 3 }}><Stack spacing={2}>
+        <Box><Typography variant="h6" sx={{ fontWeight: 700 }}>Google Calendar via Apps Script</Typography><Typography color="text.secondary">Deploy the Apps Script in your own Google account, then save its Web app URL here. Existing Apps Script events keep using this connection. If direct Google Calendar is not connected, new entries use Apps Script.</Typography></Box>
         <Accordion variant="outlined"><AccordionSummary><Typography>Apps Script code and setup steps</Typography></AccordionSummary><AccordionDetails><Stack spacing={2}>
           <Typography variant="body2">Create a project at script.google.com or update your existing Clockify script with the code below. In Project Settings → Script properties, set CALENDAR_ID and WEBHOOK_SECRET. Deploy a new Web app version with Execute as Me and access Anyone, authorize Calendar access, then save the /exec URL and the same secret below. Keep both private.</Typography>
           <Button variant="outlined" onClick={() => void navigator.clipboard.writeText(calendarScript)}>Copy script</Button>
@@ -775,7 +862,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
       {selectedTimelineEntry?.description && <Typography color="text.secondary">{selectedTimelineEntry.description}</Typography>}
       {selectedTimelineEntry && <Stack direction="row" spacing={0.5}>{entryTags(selectedTimelineEntry.id).map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={{ bgcolor: tag.color, color: 'white' }} />)}</Stack>}
       {selectedTimelineEntry && <><Typography>Started: {new Date(selectedTimelineEntry.start_at).toLocaleString()}</Typography><Typography>{selectedTimelineEntry.end_at ? `Ended: ${new Date(selectedTimelineEntry.end_at).toLocaleString()}` : `Status: ${selectedTimelineEntry.status}`}</Typography><Typography sx={{ fontVariantNumeric: 'tabular-nums' }}>Tracked: {duration(currentDuration(selectedTimelineEntry, now))}</Typography></>}
-    </Stack></DialogContent><DialogActions>{selectedTimelineEntry && <><Button onClick={() => openEdit(selectedTimelineEntry)}>Edit</Button><Button color="error" onClick={() => { setEntryDialogError(''); setDeletingEntry(selectedTimelineEntry); setSelectedTimelineEntry(null); }}>Delete</Button></>}<Button onClick={() => setSelectedTimelineEntry(null)}>Close</Button></DialogActions></Dialog>
+    </Stack></DialogContent><DialogActions>{selectedTimelineEntry && <>{googleLinks[selectedTimelineEntry.id] && <Button href={googleLinks[selectedTimelineEntry.id]} target="_blank" rel="noopener noreferrer">Calendar event</Button>}<Button onClick={() => openEdit(selectedTimelineEntry)}>Edit</Button><Button color="error" onClick={() => { setEntryDialogError(''); setDeletingEntry(selectedTimelineEntry); setSelectedTimelineEntry(null); }}>Delete</Button></>}<Button onClick={() => setSelectedTimelineEntry(null)}>Close</Button></DialogActions></Dialog>
     <Dialog open={!!editingEntry} onClose={() => { if (!busy) setEditingEntry(null); }} fullWidth maxWidth="sm"><Box component="form" onSubmit={updateEntry}><DialogTitle>Edit time entry</DialogTitle><DialogContent><Stack spacing={2} sx={{ pt: 1 }}>
       {catalogReady ? <><TextField select label="Project" value={editProject} onChange={(e) => { setEditProject(e.target.value); setEditTask(''); }} fullWidth><MenuItem value="">No project</MenuItem>{projects.filter((item) => !item.archived || item.key === editProject).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{editProject && !projects.some((item) => item.key === editProject) && <MenuItem value={editProject}>{editProject} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('project', 'edit')}>New project</Button><TextField select label="Task" value={editTask} onChange={(e) => setEditTask(e.target.value)} fullWidth><MenuItem value="">No task</MenuItem>{tasks.filter((item) => (!item.archived || item.key === editTask) && item.project_id === projects.find((record) => record.key === editProject)?.id).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{editTask && !tasks.some((item) => item.key === editTask && item.project_id === projects.find((record) => record.key === editProject)?.id) && <MenuItem value={editTask}>{editTask} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('task', 'edit')} disabled={!projects.some((item) => item.key === editProject)}>New task</Button></> : <><TextField label="Project" value={editProject} onChange={(e) => setEditProject(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /><TextField label="Task" value={editTask} onChange={(e) => setEditTask(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /></>}
       <TextField label="Description" value={editDescription} onChange={(e) => setEditDescription(e.target.value)} fullWidth multiline minRows={2} slotProps={{ htmlInput: { maxLength: 500 } }} />

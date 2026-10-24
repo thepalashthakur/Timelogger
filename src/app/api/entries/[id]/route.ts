@@ -3,7 +3,7 @@ import { adminClient } from '@/lib/admin';
 import { authenticated, badRequest, details, unauthorized } from '@/lib/api';
 import type { TimeEntry } from '@/lib/supabase';
 import { resolveSelection, setEntryTags, validateTagIds } from '@/lib/catalog';
-import { queueCalendarDelete, queueCalendarUpsert } from '@/lib/calendar';
+import { queueCalendarDelete, queueCalendarUpsert } from '@/lib/calendar-dispatch';
 
 export const dynamic = 'force-dynamic';
 

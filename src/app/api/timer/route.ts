@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticated, badRequest, details, unauthorized } from '@/lib/api';
 import { attachTagsToNewEntry, ensureJiraCatalog, resolveSelection, validateTagIds } from '@/lib/catalog';
-import { queueCalendarUpsert } from '@/lib/calendar';
+import { queueCalendarUpsert } from '@/lib/calendar-dispatch';
 import type { TimeEntry } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';

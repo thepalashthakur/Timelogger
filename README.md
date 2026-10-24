@@ -6,7 +6,7 @@ A Vercel ready Next.js time tracker using Supabase Auth, Supabase Postgres, and 
 
 These steps use the existing Supabase project and the Vercel project connected to this repository. The Jira issue panel is a separate Forge deployment described below.
 
-1. **Apply the database migrations.** In the Supabase SQL Editor, review and run `supabase/schema.sql`, then `supabase/api_tokens.sql`, then `supabase/catalog.sql`, then `supabase/calendar_sync.sql`, then `supabase/calendar_webhook.sql` for a new Timelogger installation. For an existing installation, apply only migrations that have not yet been run; v0.6 needs the two Calendar migrations. The migrations create only `timelogger_` objects and do not alter existing tables or data. Do not rerun a migration that has already been applied.
+1. **Apply the database migrations.** In the Supabase SQL Editor, review and run `supabase/schema.sql`, then `supabase/api_tokens.sql`, then `supabase/catalog.sql`, then `supabase/calendar_sync.sql`, then `supabase/calendar_webhook.sql`, then `supabase/google_calendar.sql` for a new Timelogger installation. For an existing installation, apply only migrations that have not yet been run; v0.8 adds `supabase/google_calendar.sql`. The migrations create only `timelogger_` objects and do not alter existing tables or data. Do not rerun a migration that has already been applied.
 2. **Configure Supabase Auth.** Enable email/password sign-in. Set the Auth site URL to your deployed web app URL (currently `https://timelogger-gilt.vercel.app`). If you use email confirmations, configure the allowed redirect URLs for the deployed domain and `http://localhost:3000` for local development.
 3. **Set the Vercel environment variables.** In the Timelogger project's Vercel settings, add `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` to the Production environment. Use the Supabase project URL, its anon/publishable key, and its service role key respectively. The service role key is required for personal API tokens and stays server-side; never put it in browser code or Forge. Add the same values to Preview only if you deploy previews. Redeploy after changing environment variables.
 4. **Check the app locally.** From the repository root, copy `.env.example` to `.env.local`, fill in the three values, then run:
@@ -46,6 +46,17 @@ The Jira Cloud issue panel lives in [`forge/`](forge/README.md). It requires sep
 
 ## Google Calendar sync
 
+### Direct Google connection (v0.8)
+
+1. In Google Cloud Console, create or select a project, enable the Google Calendar API, and configure the OAuth consent screen. Add the scopes `https://www.googleapis.com/auth/calendar.events.owned` and `https://www.googleapis.com/auth/calendar.calendarlist.readonly`. Add yourself as a test user while the app is in Testing. For use by other accounts, complete Google's OAuth publication and verification requirements. Refresh tokens issued while the app is in Testing may expire after seven days.
+2. Create an OAuth client of type **Web application**. Register `https://timelogger-gilt.vercel.app/api/google/callback` as an authorized redirect URI. For local development, also register `http://localhost:3000/api/google/callback` or use a separate local OAuth client.
+3. Apply `supabase/google_calendar.sql` in the existing Supabase project's SQL Editor. It creates only new prefixed tables. Set these **server-side** Vercel environment variables: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI=https://timelogger-gilt.vercel.app/api/google/callback`, and `GOOGLE_TOKEN_ENCRYPTION_KEY`. Generate the last value with `openssl rand -base64 32`, save it securely, and keep the same value across redeployments. Never expose the client secret or encryption key in browser code.
+4. Redeploy the web app, sign in, then open **Settings → Direct Google Calendar → Connect Google Calendar**. Grant access and choose one of your owned calendars. Create a completed entry or stop a timer, then verify its event. You can open the event from the time entry list or timeline. Editing and deleting the entry update and delete its Google event. Failed changes appear in Settings with **Retry**.
+
+Direct Google sync is one-way from Timelogger to Google Calendar. Running and paused timers sync after stop. The connection uses an encrypted per-user refresh token. New entries use the direct connection while it is active; entries already linked to Apps Script continue to use Apps Script. Changing the selected calendar affects only new entries. Disconnecting direct Google access stops sync for its linked entries until that user reconnects; it does not delete events already in Google Calendar.
+
+### Apps Script connection (still supported)
+
 Each user connects their own Google Calendar through a Google Apps Script Web app:
 
 1. In Timelogger **Settings → Google Calendar**, expand **Apps Script code and setup steps** and copy the script. This version keeps the existing `source: "clockify"`, `action: "upsert"`, `idempotencyKey`, and `event` request format, and adds Timelogger upserts and deletes.
@@ -82,6 +93,12 @@ data is restricted to that user. Personal tokens cannot create or revoke tokens.
 | `PUT` | `/api/entry-tags` | Replace an entry's tags with `{ "entry_id": "...", "tag_ids": ["..."] }` |
 | `GET`, `PUT`, `DELETE` | `/api/calendar/settings` | Read, save, or disconnect the signed-in user's Apps Script URL and shared secret; GET never returns the secret |
 | `GET`, `POST` | `/api/calendar/sync` | Read failed or pending deliveries; retry up to five |
+| `POST` | `/api/google/connect` | Begin Google OAuth for the signed-in user |
+| `GET` | `/api/google/callback` | Complete Google OAuth redirect |
+| `GET`, `PATCH`, `DELETE` | `/api/google/settings` | Read, choose an owned calendar, or disconnect the direct connection |
+| `GET` | `/api/google/calendars` | List owned Google Calendars |
+| `GET`, `POST` | `/api/google/sync` | Read or retry direct Calendar deliveries |
+| `GET` | `/api/google/links?ids=<entry-ids>` | Read direct Calendar event links for owned entries |
 
 Token management requires a Supabase login session. `GET /api/tokens` lists token
 metadata, `POST /api/tokens` with `{ "name": "Jira" }` creates a token, and
