@@ -214,6 +214,10 @@ The selected appearance is a browser preference and does not require a database 
 
 The profile uses the existing Supabase Auth user record. No database migration is required.
 
+### v0.15.1 — conditional password reauthentication
+
+The signed-in password form shows no email-code action by default. If Supabase returns `reauthentication_needed` for the current session, the form reveals Send verification code and accepts the emailed code for the retry. No database migration is required.
+
 ## v1 — custom time entry properties
 
 | Feature | Status |

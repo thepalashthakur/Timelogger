@@ -96,6 +96,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   const [confirmPassword, setConfirmPassword] = useState('');
   const [changeNonce, setChangeNonce] = useState('');
   const [changeCodeSent, setChangeCodeSent] = useState(false);
+  const [changeRequiresCode, setChangeRequiresCode] = useState(false);
   const [changeError, setChangeError] = useState('');
   const [project, setProject] = useState('');
   const [task, setTask] = useState('');
@@ -738,8 +739,13 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
         password: newPassword, current_password: currentPassword,
         ...(changeNonce ? { nonce: changeNonce.trim() } : {}),
       });
+      if (error?.code === 'reauthentication_needed') {
+        setChangeRequiresCode(true);
+        setChangeError('Supabase requires an email verification code for this session. Send a code, then try again.');
+        return;
+      }
       if (error) throw error;
-      setCurrentPassword(''); setNewPassword(''); setConfirmPassword(''); setChangeNonce(''); setChangeCodeSent(false);
+      setCurrentPassword(''); setNewPassword(''); setConfirmPassword(''); setChangeNonce(''); setChangeCodeSent(false); setChangeRequiresCode(false);
       setNotice('Password changed');
     } catch (caught) { setChangeError(caught instanceof Error ? caught.message : 'Could not change password'); }
     finally { setBusy(false); }
@@ -1038,10 +1044,9 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
         <TextField label="Current password" type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} required fullWidth autoComplete="current-password" />
         <TextField label="New password" type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} required fullWidth autoComplete="new-password" slotProps={{ htmlInput: { minLength: 8 } }} />
         <TextField label="Confirm new password" type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} required fullWidth autoComplete="new-password" slotProps={{ htmlInput: { minLength: 8 } }} />
-        {changeCodeSent && <TextField label="Email verification code" value={changeNonce} onChange={(event) => setChangeNonce(event.target.value)} required fullWidth autoComplete="one-time-code" />}
+        {changeRequiresCode && changeCodeSent && <TextField label="Email verification code" value={changeNonce} onChange={(event) => setChangeNonce(event.target.value)} required fullWidth autoComplete="one-time-code" />}
         {changeError && <Alert severity="error">{changeError}</Alert>}
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}><Button variant="contained" type="submit" disabled={busy || (changeCodeSent && !changeNonce.trim())}>Change password</Button><Button type="button" onClick={() => void sendPasswordChangeCode()} disabled={busy}>Send verification code</Button></Stack>
-        <Typography variant="body2" color="text.secondary">Use the email code if Supabase requires reauthentication for this session.</Typography>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}><Button variant="contained" type="submit" disabled={busy || (changeRequiresCode && (!changeCodeSent || !changeNonce.trim()))}>Change password</Button>{changeRequiresCode && <Button type="button" onClick={() => void sendPasswordChangeCode()} disabled={busy}>{changeCodeSent ? 'Resend verification code' : 'Send verification code'}</Button>}</Stack>
       </Stack></Box></Paper>
       <Paper variant="outlined" sx={{ borderRadius: 3, p: 3 }}><Stack spacing={2}>
         <Box><Typography variant="h6" sx={{ fontWeight: 700 }}>Direct Google Calendar</Typography><Typography color="text.secondary">Connect your Google account to create, update, and delete Calendar events when completed time entries change. Timers sync after you stop them.</Typography></Box>
