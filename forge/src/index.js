@@ -1,10 +1,35 @@
 import { createHash } from 'node:crypto';
-import { fetch } from '@forge/api';
+import api, { fetch, route } from '@forge/api';
 import { kvs } from '@forge/kvs';
 import { makeResolver } from '@forge/resolver';
 
 const tokenPattern = /^tl_[A-Za-z0-9_-]{43}$/;
 const actions = new Set(['start', 'pause', 'resume', 'stop']);
+const jiraKeyPattern = /^[A-Z][A-Z0-9_]{0,99}-[0-9]+$/;
+
+async function jiraHierarchy(issueKey) {
+  const nodes = [];
+  const visited = new Set();
+  let key = issueKey;
+  while (key && nodes.length < 10 && !visited.has(key)) {
+    if (!jiraKeyPattern.test(key)) throw new Error('Invalid Jira issue key');
+    visited.add(key);
+    const response = await api.asUser().requestJira(route`/rest/api/3/issue/${key}?fields=summary,issuetype,parent,project`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) throw new Error(`Could not read Jira issue ${key} (${response.status})`);
+    const issue = await response.json();
+    nodes.push({
+      key: issue.key,
+      project_key: issue.fields?.project?.key,
+      summary: issue.fields?.summary,
+      issue_type: issue.fields?.issuetype?.name,
+    });
+    key = issue.fields?.parent?.key ?? null;
+  }
+  if (key) throw new Error('Jira issue hierarchy is too deep or cyclic');
+  return nodes.reverse();
+}
 
 function userKey(context) {
   const accountId = context?.accountId;
@@ -85,6 +110,12 @@ export const handler = makeResolver({
       }
       body.tag_ids = payload.tag_ids;
     }
-    return request('/api/timer', await storedToken(context), 'POST', body);
+    const token = await storedToken(context);
+    if (action === 'start' && jiraKeyPattern.test(body.task)) {
+      const nodes = await jiraHierarchy(body.task);
+      if (nodes.at(-1)?.project_key !== body.project) throw new Error('Jira issue project does not match');
+      await request('/api/catalog/jira', token, 'POST', { nodes });
+    }
+    return request('/api/timer', token, 'POST', body);
   },
 });

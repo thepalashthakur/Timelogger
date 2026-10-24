@@ -30,7 +30,7 @@ type GoogleCalendarOption = { id: string; summary: string; primary?: boolean };
 type View = 'dashboard' | 'entries' | 'catalog' | 'settings';
 type StatusFilter = 'all' | TimeEntry['status'];
 type ProjectRecord = { id: string; key: string; name: string; color: string; archived: boolean };
-type TaskRecord = { id: string; project_id: string; key: string; name: string; archived: boolean };
+type TaskRecord = { id: string; project_id: string; key: string; name: string; archived: boolean; parent_task_id: string | null; issue_type: string; source: 'manual' | 'jira' };
 type TagRecord = { id: string; name: string; color: string };
 type CatalogKind = 'project' | 'task' | 'tag';
 const pageSize = 20;
@@ -82,6 +82,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   const [entry, setEntry] = useState<TimeEntry | null>(null);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
+  const [taskTotals, setTaskTotals] = useState<Record<string, number>>({});
   const [tags, setTags] = useState<TagRecord[]>([]);
   const [catalogError, setCatalogError] = useState('');
   const [catalogReady, setCatalogReady] = useState(false);
@@ -94,6 +95,8 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   const [catalogKey, setCatalogKey] = useState('');
   const [catalogColor, setCatalogColor] = useState('#1976d2');
   const [catalogProjectId, setCatalogProjectId] = useState('');
+  const [catalogParentTaskId, setCatalogParentTaskId] = useState('');
+  const [catalogIssueType, setCatalogIssueType] = useState('Task');
   const [catalogDialogError, setCatalogDialogError] = useState('');
   const [catalogTarget, setCatalogTarget] = useState<'timer' | 'manual' | 'edit' | 'catalog'>('catalog');
   const [deletingTag, setDeletingTag] = useState<TagRecord | null>(null);
@@ -209,6 +212,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     try {
       const data = await request('/api/catalog');
       setProjects(data.projects); setTasks(data.tasks); setTags(data.tags);
+      setTaskTotals(Object.fromEntries((data.totals ?? []).map((item: { task_id: string; seconds: number }) => [item.task_id, Number(item.seconds)])));
       setCatalogError(''); setCatalogReady(true);
     } catch (caught) {
       setCatalogError(caught instanceof Error ? caught.message : 'Could not load projects and tags');
@@ -340,7 +344,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   }, [session, refreshGoogle]);
 
   useEffect(() => {
-    if (!session) { setEntry(null); setEntries([]); setTimelineEntries([]); setProjects([]); setTasks([]); setCatalogReady(false); setEntryTagIds({}); setApiTokens([]); setNewToken(''); setCalendarUrl(''); setSavedCalendarUrl(''); setCalendarSecret(''); setCalendarHasSecret(false); setCalendarError(''); setCalendarPending([]); setGoogleConnection(null); setGoogleCalendars([]); setGooglePending([]); setGoogleLinks({}); entryRequestId.current += 1; timelineRequestId.current += 1; return; }
+    if (!session) { setEntry(null); setEntries([]); setTimelineEntries([]); setProjects([]); setTasks([]); setTaskTotals({}); setCatalogReady(false); setEntryTagIds({}); setApiTokens([]); setNewToken(''); setCalendarUrl(''); setSavedCalendarUrl(''); setCalendarSecret(''); setCalendarHasSecret(false); setCalendarError(''); setCalendarPending([]); setGoogleConnection(null); setGoogleCalendars([]); setGooglePending([]); setGoogleLinks({}); entryRequestId.current += 1; timelineRequestId.current += 1; return; }
     void refreshTimer();
     void refreshTokens();
     void refreshCalendarSettings();
@@ -419,6 +423,49 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     return tasks.find((item) => item.project_id === projectId && item.key === key)?.name ?? key;
   }
 
+  function taskPath(item: TaskRecord) {
+    const names = [item.name];
+    const visited = new Set([item.id]);
+    let parentId = item.parent_task_id;
+    while (parentId && !visited.has(parentId)) {
+      const parent = tasks.find((record) => record.id === parentId && record.project_id === item.project_id);
+      if (!parent) break;
+      names.unshift(parent.name);
+      visited.add(parent.id);
+      parentId = parent.parent_task_id;
+    }
+    return names.join(' / ');
+  }
+
+  function taskDescendants(id: string) {
+    const descendants = new Set([id]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const candidate of tasks) {
+        if (candidate.parent_task_id && descendants.has(candidate.parent_task_id) && !descendants.has(candidate.id)) {
+          descendants.add(candidate.id); changed = true;
+        }
+      }
+    }
+    return descendants;
+  }
+
+  function taskTree(projectId: string, parentId: string | null = null, visited = new Set<string>()): React.ReactNode {
+    return tasks.filter((item) => item.project_id === projectId &&
+      (item.parent_task_id === parentId || (parentId === null && !tasks.some((parent) => parent.id === item.parent_task_id && parent.project_id === projectId))))
+      .sort((a, b) => a.name.localeCompare(b.name)).map((item) => {
+        if (visited.has(item.id)) return null;
+        const next = new Set(visited); next.add(item.id);
+        return <Box key={item.id} sx={{ borderTop: 1, borderColor: 'divider', py: 1, pl: parentId ? 2 : 0 }}>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between' }}>
+            <Box><Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><Typography sx={{ fontWeight: 600 }}>{item.name}</Typography><Chip size="small" variant="outlined" label={item.issue_type} />{item.archived && <Chip size="small" label="Archived" />}</Stack><Typography variant="body2" color="text.secondary">{item.key} · {duration(taskTotals[item.id] ?? 0)} direct · {duration([...taskDescendants(item.id)].reduce((total, taskId) => total + (taskTotals[taskId] ?? 0), 0))} with children</Typography></Box>
+            <Stack direction="row" spacing={1}><Button size="small" onClick={() => { openCatalog('task'); setCatalogProjectId(projectId); setCatalogParentTaskId(item.id); setCatalogIssueType('Subtask'); }}>Add child</Button><Button size="small" onClick={() => openCatalog('task', 'catalog', item)}>Edit</Button><Button size="small" onClick={() => void changeCatalogState('task', item.id, item.archived)} disabled={busy}>{item.archived ? 'Restore' : 'Archive'}</Button></Stack>
+          </Stack>{taskTree(projectId, item.id, next)}
+        </Box>;
+      });
+  }
+
   function entryTags(id: string) {
     return tags.filter((item) => (entryTagIds[id] ?? []).includes(item.id));
   }
@@ -430,6 +477,8 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     setCatalogColor(item && 'color' in item ? item.color : kind === 'tag' ? '#757575' : '#1976d2');
     const targetProject = target === 'timer' ? project : target === 'manual' ? manualProject : target === 'edit' ? editProject : '';
     setCatalogProjectId(item && 'project_id' in item ? item.project_id : projects.find((record) => record.key === targetProject)?.id ?? '');
+    setCatalogParentTaskId(item && 'parent_task_id' in item ? item.parent_task_id ?? '' : '');
+    setCatalogIssueType(item && 'issue_type' in item ? item.issue_type : 'Task');
   }
 
   async function saveCatalog(event: React.FormEvent) {
@@ -439,8 +488,8 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     try {
       const { kind, item } = catalogDialog;
       const payload = item
-        ? { name: catalogName, ...(kind !== 'task' ? { color: catalogColor } : {}) }
-        : { kind, name: catalogName, key: catalogKey || undefined, project_id: catalogProjectId || undefined, ...(kind !== 'task' ? { color: catalogColor } : {}) };
+        ? { name: catalogName, ...(kind === 'task' ? { parent_task_id: catalogParentTaskId || null, issue_type: catalogIssueType } : { color: catalogColor }) }
+        : { kind, name: catalogName, key: catalogKey || undefined, project_id: catalogProjectId || undefined, ...(kind === 'task' ? { parent_task_id: catalogParentTaskId || null, issue_type: catalogIssueType } : { color: catalogColor }) };
       const data = await request(item ? `/api/catalog/${kind}s/${item.id}` : '/api/catalog', { method: item ? 'PATCH' : 'POST', body: JSON.stringify(payload) });
       if (!item) {
         if (kind === 'project') {
@@ -805,7 +854,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
           </Stack>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
             {catalogReady ? <TextField select label="Project" value={entry ? entry.project : project} onChange={(e) => { setProject(e.target.value); setTask(''); }} disabled={!!entry} size="small" sx={{ flex: 1 }}><MenuItem value="">No project</MenuItem>{projects.filter((item) => !item.archived).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{(entry ? entry.project : project) && !projects.some((item) => item.key === (entry ? entry.project : project)) && <MenuItem value={entry ? entry.project : project}>{entry ? entry.project : project} (legacy)</MenuItem>}</TextField> : <TextField label="Project" value={entry ? entry.project : project} onChange={(e) => setProject(e.target.value)} disabled={!!entry} size="small" sx={{ flex: 1 }} slotProps={{ htmlInput: { maxLength: 500 } }} />}
-            {catalogReady ? <TextField select label="Task" value={entry ? entry.task : task} onChange={(e) => setTask(e.target.value)} disabled={!!entry} size="small" sx={{ flex: 1 }}><MenuItem value="">No task</MenuItem>{tasks.filter((item) => !item.archived && item.project_id === projects.find((record) => record.key === (entry ? entry.project : project))?.id).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{(entry ? entry.task : task) && !tasks.some((item) => item.key === (entry ? entry.task : task) && item.project_id === projects.find((record) => record.key === (entry ? entry.project : project))?.id) && <MenuItem value={entry ? entry.task : task}>{entry ? entry.task : task} (legacy)</MenuItem>}</TextField> : <TextField label="Task" value={entry ? entry.task : task} onChange={(e) => setTask(e.target.value)} disabled={!!entry} size="small" sx={{ flex: 1 }} slotProps={{ htmlInput: { maxLength: 500 } }} />}
+            {catalogReady ? <TextField select label="Task" value={entry ? entry.task : task} onChange={(e) => setTask(e.target.value)} disabled={!!entry} size="small" sx={{ flex: 1 }}><MenuItem value="">No task</MenuItem>{tasks.filter((item) => !item.archived && item.project_id === projects.find((record) => record.key === (entry ? entry.project : project))?.id).map((item) => <MenuItem key={item.id} value={item.key}>{taskPath(item)} ({item.key})</MenuItem>)}{(entry ? entry.task : task) && !tasks.some((item) => item.key === (entry ? entry.task : task) && item.project_id === projects.find((record) => record.key === (entry ? entry.project : project))?.id) && <MenuItem value={entry ? entry.task : task}>{entry ? entry.task : task} (legacy)</MenuItem>}</TextField> : <TextField label="Task" value={entry ? entry.task : task} onChange={(e) => setTask(e.target.value)} disabled={!!entry} size="small" sx={{ flex: 1 }} slotProps={{ htmlInput: { maxLength: 500 } }} />}
             {entry && <Chip label={entry.status === 'running' ? 'Running' : 'Paused'} color={entry.status === 'running' ? 'success' : 'warning'} sx={{ alignSelf: 'center' }} />}
             {!entry && catalogReady && <><Button onClick={() => openCatalog('project', 'timer')}>New project</Button><Button onClick={() => openCatalog('task', 'timer')} disabled={!projects.some((item) => item.key === project)}>New task</Button></>}
             <Button onClick={() => setManualDialogOpen(true)}>Add time manually</Button>
@@ -877,14 +926,14 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
         </Stack></Paper>
       </Stack></Box>}
       {view === 'catalog' && <Box role="tabpanel" id="panel-catalog" aria-labelledby="tab-catalog"><Stack spacing={3}>
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}><Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Projects, tasks & tags</Typography><Typography color="text.secondary">Projects group work. Each task belongs to one project. Tags can be used across projects.</Typography></Box><Button variant="outlined" onClick={() => void importCatalog()} disabled={busy || !catalogReady}>Import from existing entries</Button></Stack>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}><Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Projects, tasks & tags</Typography><Typography color="text.secondary">Arrange work as project → epic → task → subtask, or use any depth. Tags can be used across projects.</Typography></Box><Button variant="outlined" onClick={() => void importCatalog()} disabled={busy || !catalogReady}>Import from existing entries</Button></Stack>
         <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}><Stack spacing={2}><Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}><Typography variant="h6">Projects</Typography><Button variant="contained" onClick={() => openCatalog('project')}>New project</Button></Stack>
           {!projects.length && <Typography color="text.secondary">No projects yet.</Typography>}
           {projects.map((item) => <Stack key={item.id} direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between', borderTop: 1, borderColor: 'divider', pt: 1 }}><Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><Box sx={{ width: 16, height: 16, borderRadius: 1, bgcolor: item.color }} /><Typography sx={{ fontWeight: 600 }}>{item.name}</Typography><Typography variant="body2" color="text.secondary">{item.key}</Typography>{item.archived && <Chip size="small" label="Archived" />}</Stack><Stack direction="row" spacing={1}><Button size="small" onClick={() => openCatalog('project', 'catalog', item)}>Edit</Button><Button size="small" onClick={() => void changeCatalogState('project', item.id, item.archived)} disabled={busy}>{item.archived ? 'Restore' : 'Archive'}</Button></Stack></Stack>)}
         </Stack></Paper>
         <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}><Stack spacing={2}><Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}><Typography variant="h6">Tasks</Typography><Button variant="contained" onClick={() => openCatalog('task')} disabled={!projects.some((item) => !item.archived)}>New task</Button></Stack>
           {!tasks.length && <Typography color="text.secondary">No tasks yet. Create a project first.</Typography>}
-          {tasks.map((item) => <Stack key={item.id} direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between', borderTop: 1, borderColor: 'divider', pt: 1 }}><Box><Typography sx={{ fontWeight: 600 }}>{item.name} {item.archived && <Chip size="small" label="Archived" />}</Typography><Typography variant="body2" color="text.secondary">{projects.find((record) => record.id === item.project_id)?.name ?? 'Unknown project'} · {item.key}</Typography></Box><Stack direction="row" spacing={1}><Button size="small" onClick={() => openCatalog('task', 'catalog', item)}>Edit</Button><Button size="small" onClick={() => void changeCatalogState('task', item.id, item.archived)} disabled={busy}>{item.archived ? 'Restore' : 'Archive'}</Button></Stack></Stack>)}
+          {projects.map((record) => tasks.some((item) => item.project_id === record.id) && <Box key={record.id}><Typography variant="subtitle1" sx={{ fontWeight: 700, mt: 1 }}>{record.name}</Typography>{taskTree(record.id)}</Box>)}
         </Stack></Paper>
         <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}><Stack spacing={2}><Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}><Typography variant="h6">Tags</Typography><Button variant="contained" onClick={() => openCatalog('tag')}>New tag</Button></Stack>
           {!tags.length && <Typography color="text.secondary">No tags yet.</Typography>}
@@ -956,7 +1005,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
       </Stack></Box>}
     </Stack></Container>
     <Dialog open={manualDialogOpen} onClose={() => setManualDialogOpen(false)} fullWidth maxWidth="sm"><Box component="form" onSubmit={createManual}><DialogTitle>Add time manually</DialogTitle><DialogContent><Stack spacing={2} sx={{ pt: 1 }}>
-      {catalogReady ? <><TextField select label="Project" value={manualProject} onChange={(e) => { setManualProject(e.target.value); setManualTask(''); }} fullWidth><MenuItem value="">No project</MenuItem>{projects.filter((item) => !item.archived).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{manualProject && !projects.some((item) => item.key === manualProject) && <MenuItem value={manualProject}>{manualProject} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('project', 'manual')}>New project</Button><TextField select label="Task" value={manualTask} onChange={(e) => setManualTask(e.target.value)} fullWidth><MenuItem value="">No task</MenuItem>{tasks.filter((item) => !item.archived && item.project_id === projects.find((record) => record.key === manualProject)?.id).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{manualTask && !tasks.some((item) => item.key === manualTask && item.project_id === projects.find((record) => record.key === manualProject)?.id) && <MenuItem value={manualTask}>{manualTask} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('task', 'manual')} disabled={!projects.some((item) => item.key === manualProject)}>New task</Button></> : <><TextField label="Project" value={manualProject} onChange={(e) => setManualProject(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /><TextField label="Task" value={manualTask} onChange={(e) => setManualTask(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /></>}
+      {catalogReady ? <><TextField select label="Project" value={manualProject} onChange={(e) => { setManualProject(e.target.value); setManualTask(''); }} fullWidth><MenuItem value="">No project</MenuItem>{projects.filter((item) => !item.archived).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{manualProject && !projects.some((item) => item.key === manualProject) && <MenuItem value={manualProject}>{manualProject} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('project', 'manual')}>New project</Button><TextField select label="Task" value={manualTask} onChange={(e) => setManualTask(e.target.value)} fullWidth><MenuItem value="">No task</MenuItem>{tasks.filter((item) => !item.archived && item.project_id === projects.find((record) => record.key === manualProject)?.id).map((item) => <MenuItem key={item.id} value={item.key}>{taskPath(item)} ({item.key})</MenuItem>)}{manualTask && !tasks.some((item) => item.key === manualTask && item.project_id === projects.find((record) => record.key === manualProject)?.id) && <MenuItem value={manualTask}>{manualTask} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('task', 'manual')} disabled={!projects.some((item) => item.key === manualProject)}>New task</Button></> : <><TextField label="Project" value={manualProject} onChange={(e) => setManualProject(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /><TextField label="Task" value={manualTask} onChange={(e) => setManualTask(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /></>}
       <TextField label="Description" value={manualDescription} onChange={(e) => setManualDescription(e.target.value)} fullWidth multiline minRows={2} slotProps={{ htmlInput: { maxLength: 500 } }} />
       {catalogReady && <Stack direction="row" spacing={1}><Autocomplete multiple options={tags} getOptionLabel={(option) => option.name} value={tags.filter((item) => manualTagIds.includes(item.id))} onChange={(_event, value) => setManualTagIds(value.map((item) => item.id))} renderInput={(params) => <TextField {...params} label="Tags" />} sx={{ flex: 1 }} /><Button onClick={() => openCatalog('tag', 'manual')}>New tag</Button></Stack>}
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}><DatePicker label="Start date" value={manualStartDate} onChange={setManualStartDate} slotProps={{ textField: { required: true, fullWidth: true } }} /><TimePicker label="Start time" value={manualStartTime} onChange={setManualStartTime} ampm={false} slotProps={{ textField: { required: true, fullWidth: true } }} /></Stack>
@@ -972,7 +1021,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     </Stack></DialogContent><DialogActions>{selectedTimelineEntry && <>{googleLinks[selectedTimelineEntry.id] && <Button href={googleLinks[selectedTimelineEntry.id]} target="_blank" rel="noopener noreferrer">Calendar event</Button>}<Button onClick={() => openEdit(selectedTimelineEntry)}>Edit</Button><Button color="error" onClick={() => { setEntryDialogError(''); setDeletingEntry(selectedTimelineEntry); setSelectedTimelineEntry(null); }}>Delete</Button></>}<Button onClick={() => setSelectedTimelineEntry(null)}>Close</Button></DialogActions></Dialog>
     <Dialog open={googleCalendarDialog} onClose={() => { if (!busy) setGoogleCalendarDialog(false); }} fullWidth maxWidth="xs"><Box component="form" onSubmit={createCalendar}><DialogTitle>Create Google Calendar</DialogTitle><DialogContent><Stack spacing={2} sx={{ pt: 1 }}><Typography variant="body2" color="text.secondary">The new calendar will belong to your connected Google account and will be selected for future entries.</Typography><TextField label="Calendar name" value={googleCalendarName} onChange={(event) => setGoogleCalendarName(event.target.value)} required autoFocus fullWidth slotProps={{ htmlInput: { maxLength: 255 } }} />{googleError && <Alert severity="error">{googleError}</Alert>}</Stack></DialogContent><DialogActions><Button onClick={() => setGoogleCalendarDialog(false)} disabled={busy}>Cancel</Button><Button type="submit" variant="contained" disabled={busy || !googleCalendarName.trim()}>Create</Button></DialogActions></Box></Dialog>
     <Dialog open={!!editingEntry} onClose={() => { if (!busy) setEditingEntry(null); }} fullWidth maxWidth="sm"><Box component="form" onSubmit={updateEntry}><DialogTitle>Edit time entry</DialogTitle><DialogContent><Stack spacing={2} sx={{ pt: 1 }}>
-      {catalogReady ? <><TextField select label="Project" value={editProject} onChange={(e) => { setEditProject(e.target.value); setEditTask(''); }} fullWidth><MenuItem value="">No project</MenuItem>{projects.filter((item) => !item.archived || item.key === editProject).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{editProject && !projects.some((item) => item.key === editProject) && <MenuItem value={editProject}>{editProject} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('project', 'edit')}>New project</Button><TextField select label="Task" value={editTask} onChange={(e) => setEditTask(e.target.value)} fullWidth><MenuItem value="">No task</MenuItem>{tasks.filter((item) => (!item.archived || item.key === editTask) && item.project_id === projects.find((record) => record.key === editProject)?.id).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{editTask && !tasks.some((item) => item.key === editTask && item.project_id === projects.find((record) => record.key === editProject)?.id) && <MenuItem value={editTask}>{editTask} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('task', 'edit')} disabled={!projects.some((item) => item.key === editProject)}>New task</Button></> : <><TextField label="Project" value={editProject} onChange={(e) => setEditProject(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /><TextField label="Task" value={editTask} onChange={(e) => setEditTask(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /></>}
+      {catalogReady ? <><TextField select label="Project" value={editProject} onChange={(e) => { setEditProject(e.target.value); setEditTask(''); }} fullWidth><MenuItem value="">No project</MenuItem>{projects.filter((item) => !item.archived || item.key === editProject).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{editProject && !projects.some((item) => item.key === editProject) && <MenuItem value={editProject}>{editProject} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('project', 'edit')}>New project</Button><TextField select label="Task" value={editTask} onChange={(e) => setEditTask(e.target.value)} fullWidth><MenuItem value="">No task</MenuItem>{tasks.filter((item) => (!item.archived || item.key === editTask) && item.project_id === projects.find((record) => record.key === editProject)?.id).map((item) => <MenuItem key={item.id} value={item.key}>{taskPath(item)} ({item.key})</MenuItem>)}{editTask && !tasks.some((item) => item.key === editTask && item.project_id === projects.find((record) => record.key === editProject)?.id) && <MenuItem value={editTask}>{editTask} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('task', 'edit')} disabled={!projects.some((item) => item.key === editProject)}>New task</Button></> : <><TextField label="Project" value={editProject} onChange={(e) => setEditProject(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /><TextField label="Task" value={editTask} onChange={(e) => setEditTask(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /></>}
       <TextField label="Description" value={editDescription} onChange={(e) => setEditDescription(e.target.value)} fullWidth multiline minRows={2} slotProps={{ htmlInput: { maxLength: 500 } }} />
       {catalogReady && <Stack direction="row" spacing={1}><Autocomplete multiple options={tags} getOptionLabel={(option) => option.name} value={tags.filter((item) => editTagIds.includes(item.id))} onChange={(_event, value) => setEditTagIds(value.map((item) => item.id))} renderInput={(params) => <TextField {...params} label="Tags" />} sx={{ flex: 1 }} /><Button onClick={() => openCatalog('tag', 'edit')}>New tag</Button></Stack>}
       {editingEntry?.status === 'stopped' ? <><Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}><DatePicker label="Start date" value={editStartDate} onChange={setEditStartDate} slotProps={{ textField: { required: true, fullWidth: true } }} /><TimePicker label="Start time" value={editStartTime} onChange={setEditStartTime} ampm={false} slotProps={{ textField: { required: true, fullWidth: true } }} /></Stack><Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}><DatePicker label="End date" value={editEndDate} onChange={setEditEndDate} slotProps={{ textField: { required: true, fullWidth: true } }} /><TimePicker label="End time" value={editEndTime} onChange={setEditEndTime} ampm={false} slotProps={{ textField: { required: true, fullWidth: true } }} /></Stack><Typography variant="body2" color="text.secondary">Changing start or end time recalculates tracked duration from the new time range.</Typography></> : <Typography variant="body2" color="text.secondary">Stop this timer to edit its start and end times.</Typography>}
@@ -982,7 +1031,8 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     <Dialog open={!!catalogDialog} onClose={() => { if (!busy) setCatalogDialog(null); }} fullWidth maxWidth="xs"><Box component="form" onSubmit={saveCatalog}><DialogTitle>{catalogDialog?.item ? 'Edit' : 'New'} {catalogDialog?.kind}</DialogTitle><DialogContent><Stack spacing={2} sx={{ pt: 1 }}>
       <TextField label="Name" value={catalogName} onChange={(event) => setCatalogName(event.target.value)} required fullWidth slotProps={{ htmlInput: { maxLength: catalogDialog?.kind === 'tag' ? 100 : 200 } }} />
       {catalogDialog?.kind !== 'tag' && <TextField label="Key" value={catalogKey} onChange={(event) => setCatalogKey(event.target.value)} disabled={!!catalogDialog?.item} helperText={catalogDialog?.item ? 'Keys stay fixed so past entries and Jira links remain stable.' : 'Optional; generated from the name if blank. Use a Jira project or issue key when relevant.'} fullWidth slotProps={{ htmlInput: { maxLength: 100 } }} />}
-      {catalogDialog?.kind === 'task' && <TextField select label="Project" value={catalogProjectId} onChange={(event) => setCatalogProjectId(event.target.value)} disabled={!!catalogDialog?.item} required fullWidth>{projects.filter((item) => !item.archived || item.id === catalogProjectId).map((item) => <MenuItem key={item.id} value={item.id}>{item.name} ({item.key})</MenuItem>)}</TextField>}
+      {catalogDialog?.kind === 'task' && <TextField select label="Project" value={catalogProjectId} onChange={(event) => { setCatalogProjectId(event.target.value); setCatalogParentTaskId(''); }} disabled={!!catalogDialog?.item} required fullWidth>{projects.filter((item) => !item.archived || item.id === catalogProjectId).map((item) => <MenuItem key={item.id} value={item.id}>{item.name} ({item.key})</MenuItem>)}</TextField>}
+      {catalogDialog?.kind === 'task' && <><TextField select label="Issue type" value={catalogIssueType} onChange={(event) => setCatalogIssueType(event.target.value)} fullWidth><MenuItem value="Epic">Epic</MenuItem><MenuItem value="Task">Task</MenuItem><MenuItem value="Subtask">Subtask</MenuItem>{!['Epic', 'Task', 'Subtask'].includes(catalogIssueType) && <MenuItem value={catalogIssueType}>{catalogIssueType}</MenuItem>}</TextField><TextField select label="Parent task" value={catalogParentTaskId} onChange={(event) => setCatalogParentTaskId(event.target.value)} fullWidth helperText="Optional. Parent and child must belong to the same project."><MenuItem value="">No parent</MenuItem>{tasks.filter((record) => !record.archived && record.project_id === catalogProjectId && !(catalogDialog.item && taskDescendants(catalogDialog.item.id).has(record.id))).map((record) => <MenuItem key={record.id} value={record.id}>{taskPath(record)} ({record.key})</MenuItem>)}</TextField></>}
       {catalogDialog?.kind !== 'task' && <TextField label="Color" type="color" value={catalogColor} onChange={(event) => setCatalogColor(event.target.value)} fullWidth slotProps={{ inputLabel: { shrink: true } }} />}
       {catalogDialogError && <Alert severity="error">{catalogDialogError}</Alert>}
     </Stack></DialogContent><DialogActions><Button onClick={() => setCatalogDialog(null)} disabled={busy}>Cancel</Button><Button type="submit" variant="contained" disabled={busy}>Save</Button></DialogActions></Box></Dialog>

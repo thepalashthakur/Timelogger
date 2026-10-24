@@ -152,6 +152,19 @@ Users connected before v0.9 must reconnect once to grant the new `calendar.calen
 
 Supabase Auth must have email/password enabled and its Site URL set to the deployed Timelogger address. Password reset emails use the project's configured email sender. No database migration is needed.
 
+## v0.11 — nested tasks and Jira hierarchy
+
+| Feature | Status |
+| --- | --- |
+| Unlimited-depth parent and child tasks within a project | Implemented |
+| MUI tree display, issue type, parent selector, and Add child action | Implemented |
+| Direct and descendant tracked-time totals in the task tree | Implemented |
+| Cycle, ownership, and cross-project validation in the database | Implemented |
+| Forge reads Jira issue type, summary, and ancestry when starting a timer | Implemented |
+| Additive `timelogger_` migration; existing entries retain their keys | Implemented |
+
+Release order: apply `supabase/task_hierarchy.sql`, deploy the web app, then deploy Forge and upgrade its Jira installation for the new `read:jira-work` scope. Existing tasks remain roots until arranged manually or revisited from Jira. Jira ancestry is refreshed when a timer is started from its issue panel; broader historical Jira imports and scheduled re-sync are not included in v0.11.
+
 ## v1 — custom time entry properties
 
 | Feature | Status |

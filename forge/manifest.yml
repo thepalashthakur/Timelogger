@@ -19,6 +19,7 @@ app:
 permissions:
   scopes:
     - storage:app
+    - read:jira-work
   external:
     fetch:
       backend:
