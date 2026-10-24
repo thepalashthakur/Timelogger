@@ -4,10 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import type { Session } from '@supabase/supabase-js';
 import {
-  Accordion, AccordionDetails, AccordionSummary, Alert, AppBar, Autocomplete, Box, Breadcrumbs, Button, ButtonBase, Card, CardContent, Chip, CircularProgress,
-  Container, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Grid,
-  Link, MenuItem, Pagination, Paper, Stack, Tab, Table,
-  TableBody, TableCell, TableContainer, TableHead, TableRow, Tabs, TextField, Toolbar,
+  Accordion, AccordionDetails, AccordionSummary, Alert, AppBar, Autocomplete, Avatar, Box, Breadcrumbs, Button, ButtonBase, Card, CardContent, Chip, CircularProgress,
+  Container, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Drawer, Grid,
+  Link, List, ListItemButton, ListItemText, MenuItem, Pagination, Paper, Stack, Table,
+  TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Toolbar,
   ToggleButton, ToggleButtonGroup, Tooltip, Typography,
 } from '@mui/material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
@@ -33,7 +33,7 @@ type ApiTokenRecord = {
 };
 type CalendarSyncRecord = { entry_id: string; desired_action: 'upsert' | 'delete'; status: 'pending' | 'failed'; last_error: string | null };
 type GoogleCalendarOption = { id: string; summary: string; primary?: boolean };
-type View = 'dashboard' | 'entries' | 'analytics' | 'catalog' | 'settings';
+type View = 'dashboard' | 'entries' | 'analytics' | 'catalog' | 'profile' | 'settings';
 type StatusFilter = 'all' | TimeEntry['status'];
 type ProjectRecord = { id: string; key: string; name: string; color: string; archived: boolean };
 type TaskRecord = { id: string; project_id: string; key: string; name: string; archived: boolean; parent_task_id: string | null; issue_type: string; source: 'manual' | 'jira' };
@@ -41,6 +41,14 @@ type TagRecord = { id: string; name: string; color: string };
 type CatalogKind = 'project' | 'task' | 'tag';
 const pageSize = 20;
 const defaultHourHeight = 58;
+const navigationItems: { value: View; label: string }[] = [
+  { value: 'dashboard', label: 'Dashboard' },
+  { value: 'entries', label: 'Time entries' },
+  { value: 'analytics', label: 'Analytics' },
+  { value: 'catalog', label: 'Projects & tags' },
+  { value: 'profile', label: 'Profile' },
+  { value: 'settings', label: 'Settings' },
+];
 
 function duration(seconds: number) {
   const whole = Math.max(0, Math.floor(seconds));
@@ -76,6 +84,9 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   const [recoveryMode, setRecoveryMode] = useState(false);
   const recoveryLinkRef = useRef(typeof window !== 'undefined' && new URLSearchParams(window.location.hash.slice(1)).get('type') === 'recovery');
   const [view, setView] = useState<View>('dashboard');
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+  const [profileName, setProfileName] = useState('');
+  const [profileError, setProfileError] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [recoveryPassword, setRecoveryPassword] = useState('');
@@ -188,10 +199,14 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   }, [supabase]);
 
   useEffect(() => {
+    setProfileName(typeof session?.user.user_metadata?.full_name === 'string' ? session.user.user_metadata.full_name : '');
+  }, [session?.user.user_metadata?.full_name]);
+
+  useEffect(() => {
     const syncView = () => {
       const hash = window.location.hash.slice(1);
       if (hash === 'timer') setView('dashboard');
-      if (hash === 'dashboard' || hash === 'entries' || hash === 'analytics' || hash === 'catalog' || hash === 'settings') setView(hash);
+      if (hash === 'dashboard' || hash === 'entries' || hash === 'analytics' || hash === 'catalog' || hash === 'profile' || hash === 'settings') setView(hash);
     };
     syncView();
     window.addEventListener('hashchange', syncView);
@@ -400,7 +415,23 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
 
   function navigate(next: View) {
     setView(next);
+    setMobileNavigationOpen(false);
     window.location.hash = next;
+  }
+
+  async function saveProfile(event: React.FormEvent) {
+    event.preventDefault();
+    setProfileError('');
+    setBusy(true);
+    try {
+      const { error: updateError } = await supabase.auth.updateUser({ data: { full_name: profileName.trim() } });
+      if (updateError) throw updateError;
+      setNotice('Profile updated');
+    } catch (caught) {
+      setProfileError(caught instanceof Error ? caught.message : 'Could not update profile');
+    } finally {
+      setBusy(false);
+    }
   }
 
   function changeZoom(step: number) {
@@ -858,14 +889,28 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     </CardContent></Card>
   </Box>;
 
+  const sidebarContent = <Box sx={{ py: 2 }}>
+    <Box sx={{ px: 2, pb: 2 }}><Typography variant="subtitle2" color="text.secondary">WORKSPACE</Typography><Typography variant="h6" sx={{ fontWeight: 700 }}>Personal</Typography></Box>
+    <Divider />
+    <List component="div" aria-label="Main navigation" sx={{ px: 1, py: 1 }}>
+      {navigationItems.map((item) => <ListItemButton key={item.value} selected={view === item.value} aria-current={view === item.value ? 'page' : undefined} onClick={() => navigate(item.value)} sx={{ borderRadius: 1.5, mb: 0.5 }}><ListItemText primary={item.label} /></ListItemButton>)}
+    </List>
+    <Divider />
+    <Box sx={{ px: 2, pt: 2, minWidth: 0 }}><Typography variant="body2" color="text.secondary" noWrap title={session.user.email}>{session.user.email}</Typography></Box>
+  </Box>;
+
   return <LocalizationProvider dateAdapter={AdapterDayjs}><Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
-    <AppBar position="sticky" color="default" elevation={0} sx={{ borderBottom: 1, borderColor: 'divider' }}><Toolbar sx={{ gap: 1 }}><Typography variant="h6" sx={{ flexGrow: 1, fontWeight: 700 }}>Timelogger</Typography><Typography variant="body2" sx={{ display: { xs: 'none', md: 'block' }, mr: 1 }}>{session.user.email}</Typography><AppearanceControl /><Button color="inherit" onClick={() => void supabase.auth.signOut()}>Sign out</Button></Toolbar></AppBar>
-    <Container maxWidth="lg" component="main" sx={{ py: { xs: 2, sm: 4 } }}><Stack spacing={3}>
-      <Paper variant="outlined" sx={{ borderRadius: 3, overflow: 'hidden' }}><Tabs value={view} onChange={(_event, next: View) => navigate(next)} variant="scrollable" scrollButtons="auto" aria-label="Timelogger sections"><Tab label="Dashboard" value="dashboard" id="tab-dashboard" aria-controls="panel-dashboard" /><Tab label="Time entries" value="entries" id="tab-entries" aria-controls="panel-entries" /><Tab label="Analytics" value="analytics" id="tab-analytics" aria-controls="panel-analytics" /><Tab label="Projects & tags" value="catalog" id="tab-catalog" aria-controls="panel-catalog" /><Tab label="Settings" value="settings" id="tab-settings" aria-controls="panel-settings" /></Tabs></Paper>
+    <AppBar position="sticky" color="default" elevation={0} sx={{ borderBottom: 1, borderColor: 'divider' }}><Toolbar sx={{ gap: 1 }}><Button sx={{ display: { xs: 'inline-flex', md: 'none' } }} aria-label="Open navigation" onClick={() => setMobileNavigationOpen(true)}>Menu</Button><Typography variant="h6" sx={{ flexGrow: 1, fontWeight: 700 }}>Timelogger</Typography><Typography variant="body2" sx={{ display: { xs: 'none', lg: 'block' }, mr: 1 }}>{session.user.email}</Typography><Box sx={{ display: { xs: 'none', sm: 'block' } }}><AppearanceControl /></Box><Button color="inherit" onClick={() => void supabase.auth.signOut()}>Sign out</Button></Toolbar></AppBar>
+    <Box sx={{ display: 'flex' }}>
+      <Box component="nav" aria-label="Timelogger sections" sx={{ width: { md: 240 }, flexShrink: { md: 0 } }}>
+        <Drawer variant="temporary" open={mobileNavigationOpen} onClose={() => setMobileNavigationOpen(false)} ModalProps={{ keepMounted: true }} sx={{ display: { xs: 'block', md: 'none' }, '& .MuiDrawer-paper': { width: 260, boxSizing: 'border-box' } }}>{sidebarContent}</Drawer>
+        <Drawer variant="permanent" open sx={{ display: { xs: 'none', md: 'block' }, '& .MuiDrawer-paper': { width: 240, boxSizing: 'border-box', top: 64, height: 'calc(100vh - 64px)', borderColor: 'divider' } }}>{sidebarContent}</Drawer>
+      </Box>
+    <Container maxWidth="lg" component="main" sx={{ py: { xs: 2, sm: 4 }, minWidth: 0, flexGrow: 1 }}><Stack spacing={3}>
       {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
       {notice && <Alert severity="success" onClose={() => setNotice('')}>{notice}</Alert>}
       {catalogError && <Alert severity="warning" onClose={() => setCatalogError('')}>Projects, tasks, and tags are unavailable: {catalogError}. Apply <code>supabase/catalog.sql</code> to enable v0.5.</Alert>}
-      {view === 'dashboard' && <Box role="tabpanel" id="panel-dashboard" aria-labelledby="tab-dashboard"><Stack spacing={2}>
+      {view === 'dashboard' && <Box id="panel-dashboard"><Stack spacing={2}>
         <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}><Stack spacing={2}>
           <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ alignItems: { md: 'center' } }}>
             <TextField label="What are you working on?" value={entry ? entry.description : description} onChange={(e) => setDescription(e.target.value)} disabled={!!entry} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} />
@@ -921,7 +966,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ p: 2, justifyContent: 'space-between', alignItems: { sm: 'center' } }}><Typography variant="body2" color="text.secondary">Click a block to inspect its entry. Paused timers use a short marker at their start because pause time is not stored.</Typography><Button onClick={() => navigate('entries')}>Manage time entries</Button></Stack>
         </Stack></Paper>
       </Stack></Box>}
-      {view === 'entries' && <Box role="tabpanel" id="panel-entries" aria-labelledby="tab-entries"><Stack spacing={3}>
+      {view === 'entries' && <Box id="panel-entries"><Stack spacing={3}>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}><Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Time entries</Typography><Typography color="text.secondary">Search, edit, and manage your completed entries.</Typography></Box><Button variant="contained" onClick={() => setManualDialogOpen(true)}>Add entry</Button></Stack>
         <Paper variant="outlined" sx={{ borderRadius: 3, p: { xs: 2, sm: 3 } }}><Stack spacing={2}>
           <Grid container spacing={2}>
@@ -950,8 +995,8 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
           {!entriesLoading && !entriesError && entryCount > pageSize && <Box sx={{ p: 2, display: 'flex', justifyContent: 'center' }}><Pagination count={Math.ceil(entryCount / pageSize)} page={page} onChange={(_event, next) => setPage(next)} showFirstButton showLastButton color="primary" aria-label="Time entry pages" /></Box>}
         </Stack></Paper>
       </Stack></Box>}
-      {view === 'analytics' && <Box role="tabpanel" id="panel-analytics" aria-labelledby="tab-analytics"><Analytics request={request} projects={projects} tasks={tasks} tags={tags} onOpenEntry={(id) => void openAnalyticsEntry(id)} /></Box>}
-      {view === 'catalog' && <Box role="tabpanel" id="panel-catalog" aria-labelledby="tab-catalog"><Stack spacing={3}>
+      {view === 'analytics' && <Box id="panel-analytics"><Analytics request={request} projects={projects} tasks={tasks} tags={tags} onOpenEntry={(id) => void openAnalyticsEntry(id)} /></Box>}
+      {view === 'catalog' && <Box id="panel-catalog"><Stack spacing={3}>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}><Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Projects, tasks & tags</Typography><Typography color="text.secondary">Arrange work as project → epic → task → subtask, or use any depth. Tags can be used across projects.</Typography></Box><Button variant="outlined" onClick={() => void importCatalog()} disabled={busy || !catalogReady}>Import from existing entries</Button></Stack>
         <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}><Stack spacing={2}><Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}><Typography variant="h6">Projects</Typography><Button variant="contained" onClick={() => openCatalog('project')}>New project</Button></Stack>
           {!projects.length && <Typography color="text.secondary">No projects yet.</Typography>}
@@ -963,10 +1008,26 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
         </Stack></Paper>
         <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}><Stack spacing={2}><Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}><Typography variant="h6">Tags</Typography><Button variant="contained" onClick={() => openCatalog('tag')}>New tag</Button></Stack>
           {!tags.length && <Typography color="text.secondary">No tags yet.</Typography>}
-          {tags.map((item) => <Stack key={item.id} direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between', borderTop: 1, borderColor: 'divider', pt: 1 }}><Chip label={item.name} sx={{ bgcolor: item.color, color: 'white' }} /><Stack direction="row" spacing={1}><Button size="small" onClick={() => openCatalog('tag', 'catalog', item)}>Edit</Button><Button size="small" color="error" onClick={() => setDeletingTag(item)}>Delete</Button></Stack></Stack>)}
+          {tags.map((item) => <Stack key={item.id} direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between', borderTop: 1, borderColor: 'divider', pt: 1 }}><Chip label={item.name} sx={{ bgcolor: item.color, color: tagTextColor(item.color) }} /><Stack direction="row" spacing={1}><Button size="small" onClick={() => openCatalog('tag', 'catalog', item)}>Edit</Button><Button size="small" color="error" onClick={() => setDeletingTag(item)}>Delete</Button></Stack></Stack>)}
         </Stack></Paper>
       </Stack></Box>}
-      {view === 'settings' && <Box role="tabpanel" id="panel-settings" aria-labelledby="tab-settings"><Stack spacing={3}>
+      {view === 'profile' && <Box id="panel-profile"><Stack spacing={3}>
+        <Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Profile</Typography><Typography color="text.secondary">Your account details and personal information.</Typography></Box>
+        <Paper variant="outlined" sx={{ borderRadius: 3, p: 3 }}><Stack spacing={3}>
+          <Stack direction="row" spacing={2} sx={{ alignItems: 'center' }}><Avatar sx={{ width: 56, height: 56 }}>{(profileName || session.user.email || 'U').trim().charAt(0).toUpperCase()}</Avatar><Box sx={{ minWidth: 0 }}><Typography variant="h6" sx={{ fontWeight: 700 }}>{profileName || 'Timelogger user'}</Typography><Typography color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{session.user.email}</Typography></Box></Stack>
+          <Divider />
+          <Box component="form" onSubmit={(event) => void saveProfile(event)}><Stack spacing={2} sx={{ maxWidth: 480 }}>
+            <Typography variant="h6">Personal information</Typography>
+            <TextField label="Display name" value={profileName} onChange={(event) => setProfileName(event.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 100 } }} />
+            <TextField label="Email" value={session.user.email ?? ''} fullWidth slotProps={{ htmlInput: { readOnly: true } }} helperText="Email changes are managed through your account provider." />
+            {profileError && <Alert severity="error">{profileError}</Alert>}
+            <Box><Button type="submit" variant="contained" disabled={busy || profileName.trim() === (session.user.user_metadata?.full_name ?? '')}>Save profile</Button></Box>
+          </Stack></Box>
+          <Divider />
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}><Box><Typography variant="body2" color="text.secondary">Member since</Typography><Typography>{new Date(session.user.created_at).toLocaleDateString()}</Typography></Box><Box><Typography variant="body2" color="text.secondary">Email status</Typography><Chip size="small" label={session.user.email_confirmed_at ? 'Verified' : 'Unverified'} color={session.user.email_confirmed_at ? 'success' : 'warning'} /></Box><Button onClick={() => navigate('settings')}>Account settings</Button></Stack>
+        </Stack></Paper>
+      </Stack></Box>}
+      {view === 'settings' && <Box id="panel-settings"><Stack spacing={3}>
         <Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Settings</Typography><Typography color="text.secondary">Manage your appearance, account, and integrations.</Typography></Box>
       <Paper variant="outlined" sx={{ borderRadius: 3, p: 3 }}><Stack spacing={2} sx={{ alignItems: 'flex-start' }}>
         <Box><Typography variant="h6" sx={{ fontWeight: 700 }}>Appearance</Typography><Typography color="text.secondary">Follow your device setting or choose a theme for this browser.</Typography></Box>
@@ -1033,7 +1094,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
         </Stack>)}
       </Stack></Paper>
       </Stack></Box>}
-    </Stack></Container>
+    </Stack></Container></Box>
     <Dialog open={manualDialogOpen} onClose={() => setManualDialogOpen(false)} fullWidth maxWidth="sm"><Box component="form" onSubmit={createManual}><DialogTitle>Add time manually</DialogTitle><DialogContent><Stack spacing={2} sx={{ pt: 1 }}>
       {catalogReady ? <><TextField select label="Project" value={manualProject} onChange={(e) => { setManualProject(e.target.value); setManualTask(''); }} fullWidth><MenuItem value="">No project</MenuItem>{projects.filter((item) => !item.archived).map((item) => <MenuItem key={item.id} value={item.key}>{item.name} ({item.key})</MenuItem>)}{manualProject && !projects.some((item) => item.key === manualProject) && <MenuItem value={manualProject}>{manualProject} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('project', 'manual')}>New project</Button><TextField select label="Task" value={manualTask} onChange={(e) => setManualTask(e.target.value)} fullWidth><MenuItem value="">No task</MenuItem>{tasks.filter((item) => !item.archived && item.project_id === projects.find((record) => record.key === manualProject)?.id).map((item) => <MenuItem key={item.id} value={item.key}>{taskPath(item)} ({item.key})</MenuItem>)}{manualTask && !tasks.some((item) => item.key === manualTask && item.project_id === projects.find((record) => record.key === manualProject)?.id) && <MenuItem value={manualTask}>{manualTask} (legacy)</MenuItem>}</TextField><Button onClick={() => openCatalog('task', 'manual')} disabled={!projects.some((item) => item.key === manualProject)}>New task</Button></> : <><TextField label="Project" value={manualProject} onChange={(e) => setManualProject(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /><TextField label="Task" value={manualTask} onChange={(e) => setManualTask(e.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 500 } }} /></>}
       <TextField label="Description" value={manualDescription} onChange={(e) => setManualDescription(e.target.value)} fullWidth multiline minRows={2} slotProps={{ htmlInput: { maxLength: 500 } }} />

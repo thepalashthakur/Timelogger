@@ -203,6 +203,17 @@ See [ANALYTICS.md](ANALYTICS.md) for report semantics, similar-app research, and
 
 The selected appearance is a browser preference and does not require a database migration.
 
+## v0.15 — sidebar and profile
+
+| Feature | Status |
+| --- | --- |
+| Sidebar navigation for Dashboard, Time entries, Analytics, Projects & tags, Profile, and Settings | Implemented |
+| Mobile menu drawer with the same navigation and preserved URL hash links | Implemented |
+| Profile page with display name, email, verification status, and membership date | Implemented |
+| Edit display name through Supabase Auth user metadata | Implemented |
+
+The profile uses the existing Supabase Auth user record. No database migration is required.
+
 ## v1 — custom time entry properties
 
 | Feature | Status |
