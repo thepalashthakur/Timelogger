@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { adminClient } from '@/lib/admin';
-import { assertSharedSupabase, authCookies, clearAuthCookies, sameOriginMutation, setAuthCookies, useAuthRequest, type AuthSession, type AuthUser } from '@/lib/useauth';
+import { tokenClient } from '@/lib/supabase';
+import { authCookies, clearAuthCookies, sameOriginMutation, setAuthCookies, useAuthRequest, type AuthSession, type AuthUser } from '@/lib/useauth';
 
 export const dynamic = 'force-dynamic';
 type Context = { params: Promise<{ action: string }> };
@@ -14,9 +14,9 @@ function failure(result: { status: number; data: { error?: { code?: string; mess
   return reply({ error: result.data.error?.message ?? 'Authentication service unavailable', code: result.data.error?.code }, result.status);
 }
 
-async function localUserExists(user: AuthUser) {
+async function localUserMatches(user: AuthUser, accessToken: string) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id)) return false;
-  const { data, error } = await adminClient().auth.admin.getUserById(user.id);
+  const { data, error } = await tokenClient(accessToken).auth.getUser(accessToken);
   return !error && typeof user.email === 'string' && !!data.user?.email && data.user.email.toLowerCase() === user.email.toLowerCase();
 }
 
@@ -32,7 +32,6 @@ export async function GET(request: NextRequest, { params }: Context) {
   const tokens = authCookies(request);
   if (!tokens.access_token && !tokens.refresh_token) return reply({ user: null }, 401);
   try {
-    await assertSharedSupabase();
     let result = tokens.access_token ? await useAuthRequest('me', undefined, tokens.access_token) : null;
     let nextSession: AuthSession | null = null;
     if ((!result || result.status === 401) && tokens.refresh_token) {
@@ -44,7 +43,7 @@ export async function GET(request: NextRequest, { params }: Context) {
       result = { status: 200, data: { user: refreshed.data.user } };
     }
     if (!result || result.status !== 200 || !result.data.user) return failure(result ?? { status: 401, data: {} });
-    if (!await localUserExists(result.data.user)) return reply({ error: 'This UseAuth account does not match a Timelogger user' }, 503);
+    if (!await localUserMatches(result.data.user, nextSession?.access_token ?? tokens.access_token ?? '')) return reply({ error: 'This UseAuth session belongs to a different Supabase project' }, 503);
     const response = reply({ user: result.data.user });
     if (nextSession) setAuthCookies(response, nextSession);
     return response;
@@ -56,7 +55,7 @@ export async function GET(request: NextRequest, { params }: Context) {
 export async function POST(request: NextRequest, { params }: Context) {
   if (!sameOriginMutation(request)) return reply({ error: 'Forbidden' }, 403);
   const { action } = await params;
-  if (!['sign-up', 'sign-in', 'sign-out', 'request-reset', 'change-password', 'reauthenticate', 'update-profile'].includes(action)) return reply({ error: 'Not found' }, 404);
+  if (!['sign-up', 'sign-in', 'sign-out', 'forgot-password', 'change-password', 'reauthenticate', 'update-profile'].includes(action)) return reply({ error: 'Not found' }, 404);
   let input: Record<string, unknown>;
   try {
     const raw = await request.text();
@@ -70,12 +69,11 @@ export async function POST(request: NextRequest, { params }: Context) {
       if (tokens.access_token && tokens.refresh_token) await useAuthRequest('sign-out', tokens).catch(() => null);
       const response = reply({ signed_out: true }); clearAuthCookies(response); return response;
     }
-    await assertSharedSupabase();
-    if (action === 'sign-in' || action === 'sign-up' || action === 'request-reset') {
+    if (action === 'sign-in' || action === 'sign-up' || action === 'forgot-password') {
       const result = await useAuthRequest(action, input);
       if (result.status < 200 || result.status >= 300) return failure(result);
       if (sessionData(result.data.session)) {
-        if (!result.data.user || !await localUserExists(result.data.user)) return reply({ error: 'This UseAuth account does not match a Timelogger user' }, 503);
+        if (!result.data.user || !await localUserMatches(result.data.user, result.data.session.access_token)) return reply({ error: 'This UseAuth session belongs to a different Supabase project' }, 503);
         const response = reply({ user: result.data.user, confirmation_required: false }, result.status);
         setAuthCookies(response, result.data.session);
         return response;

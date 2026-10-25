@@ -1,102 +1,31 @@
-From dd1fbc81370759daf0e2b104b8539dd5b0865445 Mon Sep 17 00:00:00 2001
+From f6d5cbe8495663cf624ea20792eb59949b9c4354 Mon Sep 17 00:00:00 2001
 From: P <palashthakur.tech@gmail.com>
-Date: Sun, 25 Oct 2026 12:10:46 +0530
-Subject: [PATCH] Add account management API and hosted password recovery
+Date: Sun, 25 Oct 2026 12:28:44 +0530
+Subject: [PATCH] Add token account update endpoints for consuming apps
 
 ---
- README.md                        | 27 +++++++++----
- package-lock.json                |  4 +-
- package.json                     |  2 +-
- src/app/auth/recovery/route.ts   | 17 +++++++++
- src/app/forgot-password/page.tsx |  8 ++++
- src/app/reset-password/page.tsx  | 14 +++++++
- src/components/auth-form.tsx     |  1 +
- src/components/auth-layout.tsx   |  2 +-
- src/components/password-form.tsx | 58 ++++++++++++++++++++++++++++
- src/lib/auth-contract.ts         | 18 ++++++++-
- src/lib/auth-handler.ts          | 65 +++++++++++++++++++++++++++++++-
- tests/auth-handler.test.ts       | 62 ++++++++++++++++++++++++++++++
- 12 files changed, 264 insertions(+), 14 deletions(-)
- create mode 100644 src/app/auth/recovery/route.ts
- create mode 100644 src/app/forgot-password/page.tsx
- create mode 100644 src/app/reset-password/page.tsx
- create mode 100644 src/components/password-form.tsx
+ README.md                  |  3 +++
+ package-lock.json          |  4 ++--
+ package.json               |  2 +-
+ src/lib/auth-contract.ts   | 11 +++++++++++
+ src/lib/auth-handler.ts    | 31 +++++++++++++++++++++++++++++++
+ tests/auth-handler.test.ts | 27 +++++++++++++++++++++++++++
+ 6 files changed, 75 insertions(+), 3 deletions(-)
 
 diff --git a/README.md b/README.md
-index 50709b6..2e6c6ed 100644
+index 48f8915..d93f73b 100644
 --- a/README.md
 +++ b/README.md
-@@ -4,9 +4,9 @@ A plug-and-play email/password authentication microservice built with Next.js Ap
- 
- ## Included
- 
--- Hosted sign-up, sign-in, confirmation, and protected account pages.
-+- Hosted sign-up, sign-in, confirmation, password recovery, and protected account pages.
- - HttpOnly, SameSite=Lax cookies for the hosted UI, server-verified identity, and automatic session refresh.
--- Versioned JSON token API for consuming applications, refresh-token rotation, and session sign-out.
-+- Versioned JSON token API for consuming applications, refresh-token rotation, session sign-out, profile updates, and password changes.
- - Exact-origin CORS allowlist, same-origin checks for cookie mutations, bounded JSON bodies, validated input, and non-cacheable auth responses.
- - Responsive overview and integration guide at `/docs`.
- - Supabase PostgreSQL's managed `auth.users` is the account database; passwords stay with Supabase. A small `public.usernames` table reserves optional usernames; no service-role credential is needed by the app.
-@@ -37,7 +37,7 @@ Open http://localhost:3000. Without credentials, the app renders setup instructi
- ### Supabase configuration
- 
- 1. Create a Supabase project. Under Authentication → Providers, enable Email and password authentication and Confirm email. Set the minimum password length to at least 8.
--2. Under Authentication → URL Configuration, set Site URL to the auth service's origin. Add `http://localhost:3000/auth/confirm` and the deployed equivalent to Redirect URLs.
-+2. Under Authentication → URL Configuration, set Site URL to the auth service's origin. Add the deployed `/auth/confirm` and `/auth/recovery` URLs to Redirect URLs. Add localhost equivalents for local development.
- 3. Under Authentication → Email Templates → Confirm signup, use:
- 
- ```html
-@@ -48,14 +48,22 @@ Open http://localhost:3000. Without credentials, the app renders setup instructi
- 
- The callback verifies the hash, creates the hosted UI session, and redirects to `/account`. Consuming applications sign in through the API after confirmation. The callback never redirects to a caller-supplied URL.
- 
--4. Apply `supabase/migrations/20261006000000_unique_usernames.sql` to the project using `supabase db push` before deploying this version. The migration reserves usernames case-insensitively and adds an availability check for signup. It can fail if existing users already have duplicate username metadata; resolve those duplicates before retrying.
-+4. Under Authentication → Email Templates → Reset password, use a recovery link that sends the one-time token hash to UseAuth:
-+
-+```html
-+<a href="{{ .RedirectTo }}?token_hash={{ .TokenHash }}&type=recovery">Reset your password</a>
-+```
-+
-+The recovery route only accepts this token type. The reset form verifies it once when the new password is submitted; an ordinary logged-in session cannot use the reset endpoint.
-+
-+5. If you want optional usernames, review and apply `supabase/migrations/20261006000000_unique_usernames.sql` before accepting username sign-ups. It adds a username registry and availability check and can fail if existing users have duplicate username metadata. If the shared database must remain unchanged, leave usernames blank; email/password sign-up and all Timelogger account flows work without this migration.
- 
- ## Deploy on Vercel
- 
- 1. Push this Git repository to your preferred Git host, then import it into Vercel.
- 2. Select the Next.js preset (automatically detected). No custom `vercel.json` is required.
- 3. Add the environment variables above. Set `APP_URL` to your stable production domain. Add exact consuming-app origins to `AUTH_ALLOWED_ORIGINS`; no wildcard or path prefixes.
--4. Update Supabase's Site URL and confirmation Redirect URLs for that domain.
-+4. Update Supabase's Site URL and confirmation and recovery Redirect URLs for that domain, and configure both email templates above.
- 5. Deploy. Redeploy after changing variables. Configure separate preview environments if previews should authenticate; do not allow arbitrary preview domains in production.
- 
- ## API
-@@ -69,10 +77,15 @@ Base URL: `https://your-auth-service.vercel.app/api/v1/auth`.
- | GET    | `/me`       | `Authorization: Bearer <access_token>`                                                                                        |
- | POST   | `/refresh`  | `{ "refresh_token": "..." }`                                                                                                  |
- | POST   | `/sign-out` | `{ "access_token": "...", "refresh_token": "..." }`                                                                           |
-+| GET    | `/project` | No input; returns the Supabase project URL for same-project integration checks |
-+| POST   | `/request-reset` | `{ "email": "you@example.com" }`; sends a hosted recovery link |
-+| POST   | `/change-password` | Access and refresh tokens, `current_password`, `new_password`, optional `nonce` |
-+| POST   | `/reauthenticate` | Access and refresh tokens; emails a code if required |
-+| POST   | `/update-profile` | Access and refresh tokens, `display_name` |
+@@ -81,6 +81,9 @@ Base URL: `https://your-auth-service.vercel.app/api/v1/auth`.
+ | GET    | `/me`              | `Authorization: Bearer <access_token>`                                                                                                                                                          |
+ | POST   | `/refresh`         | `{ "refresh_token": "..." }`                                                                                                                                                                    |
+ | POST   | `/sign-out`        | `{ "access_token": "...", "refresh_token": "..." }`                                                                                                                                             |
++| POST   | `/change-password`  | Access and refresh tokens, `current_password`, `new_password`, optional `nonce`                                                                                                            |
++| POST   | `/reauthenticate`   | Access and refresh tokens; sends a verification code when secure password change requires it                                                                                             |
++| POST   | `/update-profile`   | Access and refresh tokens, `display_name`                                                                                                                                                 |
  
  POST bodies must be JSON and no larger than 16 KB. Sign-up passwords must be 8–128 characters; Supabase can enforce stricter rules. Sign-in accepts existing shorter passwords. Unknown fields are rejected.
  
--`username` and `display_name` are optional at sign-up. Usernames are unique, normalized to lowercase, and may contain 3–30 letters, numbers, or underscores. Display names may contain up to 80 characters. Both are stored in Supabase user metadata and returned by `/me`, sign-in, and refresh as `username` and `display_name` (or `null` for older users). User metadata is editable by its owner, so consuming apps must not treat either field as an authorization claim. Apply the migration in `supabase/migrations` before deploying this version; it reserves usernames and keeps the reservation synchronized with metadata changes.
-+`username` and `display_name` are optional at sign-up. Usernames are unique, normalized to lowercase, and may contain 3–30 letters, numbers, or underscores. Display names may contain up to 80 characters. Both are stored in Supabase user metadata and returned by `/me`, sign-in, and refresh as `username` and `display_name` (or `null` for older users). User metadata is editable by its owner, so consuming apps must not treat either field as an authorization claim. The optional username registry migration is required before accepting nonblank usernames; it reserves names and keeps the reservation synchronized with metadata changes.
- 
- ```js
- const response = await fetch(`${AUTH_URL}/api/v1/auth/sign-in`, {
-@@ -146,6 +159,6 @@ After configuring a project, test with a fresh email: sign up → open confirmat
- 
- Configure custom SMTP and review Supabase's [rate limits](https://supabase.com/docs/guides/auth/rate-limits). The app maps credential provider rate limits to 429; it does not implement its own distributed IP throttle. Since Supabase is behind this server, consider an edge IP rate limit (Vercel Firewall) for public auth routes. To add CAPTCHA, extend the credentials schema and forward a verified `captchaToken` to Supabase after enabling its [bot protection](https://supabase.com/docs/guides/auth/auth-captcha).
- 
--OAuth, password recovery, MFA, tenant management, admin APIs, and SSO handoff are future extensions.
-+OAuth, MFA, tenant management, admin APIs, and SSO handoff are future extensions.
- 
- Implementation follows Supabase's [server-side session guide](https://supabase.com/docs/guides/auth/server-side/creating-a-client?framework=nextjs) and [email template guide](https://supabase.com/docs/guides/auth/auth-email-templates).
 diff --git a/package-lock.json b/package-lock.json
 index 8e2be0e..85458b2 100644
 --- a/package-lock.json
@@ -128,162 +57,14 @@ index 0aa12b1..99f3374 100644
    "description": "Plug-and-play Next.js authentication microservice backed by Supabase",
    "dependencies": {
      "@supabase/ssr": "^0.12.7",
-diff --git a/src/app/auth/recovery/route.ts b/src/app/auth/recovery/route.ts
-new file mode 100644
-index 0000000..f685f2e
---- /dev/null
-+++ b/src/app/auth/recovery/route.ts
-@@ -0,0 +1,17 @@
-+import { NextResponse } from "next/server";
-+import { isConfigured } from "@/lib/config";
-+
-+export async function GET(request: Request) {
-+  const url = new URL(request.url);
-+  const hash = url.searchParams.get("token_hash");
-+  if (isConfigured() && hash && url.searchParams.get("type") === "recovery") {
-+    const destination = new URL("/reset-password", url.origin);
-+    destination.searchParams.set("token_hash", hash);
-+    return NextResponse.redirect(destination, {
-+      headers: { "Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer" },
-+    });
-+  }
-+  return NextResponse.redirect(new URL("/forgot-password?error=invalid-link", url.origin), {
-+    headers: { "Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer" },
-+  });
-+}
-diff --git a/src/app/forgot-password/page.tsx b/src/app/forgot-password/page.tsx
-new file mode 100644
-index 0000000..84d1f43
---- /dev/null
-+++ b/src/app/forgot-password/page.tsx
-@@ -0,0 +1,8 @@
-+import { AuthLayout } from "@/components/auth-layout";
-+import { PasswordForm } from "@/components/password-form";
-+
-+export const metadata = { title: "Forgot password" };
-+
-+export default async function ForgotPassword({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
-+  return <AuthLayout><PasswordForm mode="request" invalidLink={(await searchParams).error === "invalid-link"} /></AuthLayout>;
-+}
-diff --git a/src/app/reset-password/page.tsx b/src/app/reset-password/page.tsx
-new file mode 100644
-index 0000000..796d3cf
---- /dev/null
-+++ b/src/app/reset-password/page.tsx
-@@ -0,0 +1,14 @@
-+import { redirect } from "next/navigation";
-+import { AuthLayout } from "@/components/auth-layout";
-+import { PasswordForm } from "@/components/password-form";
-+import { isConfigured } from "@/lib/config";
-+
-+export const metadata = { title: "Reset password", referrer: "no-referrer" as const };
-+export const dynamic = "force-dynamic";
-+
-+export default async function ResetPassword({ searchParams }: { searchParams: Promise<{ token_hash?: string }> }) {
-+  if (!isConfigured()) redirect("/forgot-password");
-+  const tokenHash = (await searchParams).token_hash;
-+  if (!tokenHash) redirect("/forgot-password?error=invalid-link");
-+  return <AuthLayout><PasswordForm mode="reset" tokenHash={tokenHash} /></AuthLayout>;
-+}
-diff --git a/src/components/auth-form.tsx b/src/components/auth-form.tsx
-index 755c6b3..ffbef69 100644
---- a/src/components/auth-form.tsx
-+++ b/src/components/auth-form.tsx
-@@ -207,6 +207,7 @@ export function AuthForm({
-           {signingUp ? "Sign in" : "Create an account"}
-         </Link>
-       </p>
-+      {!signingUp && <p className="auth-switch"><Link href="/forgot-password">Forgot password?</Link></p>}
-       <div className="auth-security">
-         <CheckCircle2 size={14} /> Your password is securely managed by
-         Supabase.
-diff --git a/src/components/auth-layout.tsx b/src/components/auth-layout.tsx
-index 813fcf2..2c71eae 100644
---- a/src/components/auth-layout.tsx
-+++ b/src/components/auth-layout.tsx
-@@ -42,7 +42,7 @@ export function AuthLayout({ children }: { children: React.ReactNode }) {
-         <div className="auth-card">{children}</div>
-         <div className="auth-main-footer">
-           <Link href="/docs">Integration guide</Link>
--          <span>UseAuth v1.0</span>
-+          <span>UseAuth v1.1</span>
-         </div>
-       </section>
-     </main>
-diff --git a/src/components/password-form.tsx b/src/components/password-form.tsx
-new file mode 100644
-index 0000000..044f318
---- /dev/null
-+++ b/src/components/password-form.tsx
-@@ -0,0 +1,58 @@
-+"use client";
-+
-+import Link from "next/link";
-+import { useState } from "react";
-+import { useRouter } from "next/navigation";
-+
-+export function PasswordForm({ mode, invalidLink = false, tokenHash }: { mode: "request" | "reset"; invalidLink?: boolean; tokenHash?: string }) {
-+  const router = useRouter();
-+  const [pending, setPending] = useState(false);
-+  const [error, setError] = useState(invalidLink ? "That reset link is invalid or expired. Request a new one." : "");
-+  const [notice, setNotice] = useState("");
-+
-+  async function submit(event: React.SubmitEvent<HTMLFormElement>) {
-+    event.preventDefault();
-+    if (pending) return;
-+    const data = new FormData(event.currentTarget);
-+    const password = String(data.get("password") ?? "");
-+    if (mode === "reset" && password !== data.get("confirm")) {
-+      setError("Passwords do not match.");
-+      return;
-+    }
-+    setPending(true);
-+    setError("");
-+    try {
-+      const response = await fetch(`/api/browser/auth/${mode === "request" ? "request-reset" : "reset-password"}`, {
-+        method: "POST",
-+        headers: { "Content-Type": "application/json" },
-+        body: JSON.stringify(mode === "request" ? { email: String(data.get("email") ?? "").trim() } : { token_hash: tokenHash, password }),
-+      });
-+      const body = await response.json();
-+      if (!response.ok) {
-+        setError(body.error?.message ?? "Could not update your password. Try again.");
-+        return;
-+      }
-+      if (mode === "request") setNotice(body.message);
-+      else router.replace("/sign-in");
-+    } catch {
-+      setError("Could not reach the authentication service. Try again.");
-+    } finally {
-+      setPending(false);
-+    }
-+  }
-+
-+  return <>
-+    <span className="auth-eyebrow">ACCOUNT ACCESS</span>
-+    <h1>{mode === "request" ? "Reset your password." : "Choose a new password."}</h1>
-+    <p className="auth-description">{mode === "request" ? "We’ll email a reset link if the account exists." : "Your reset link gives you a temporary session to update your password."}</p>
-+    {error && <p className="form-error" role="alert">{error}</p>}
-+    {notice ? <p role="status">{notice}</p> : <form className="auth-form" onSubmit={submit}>
-+      {mode === "request" ? <><label htmlFor="email">Email</label><input id="email" name="email" type="email" required autoComplete="email" /></> : <>
-+        <label htmlFor="password">New password</label><input id="password" name="password" type="password" required minLength={8} maxLength={128} autoComplete="new-password" />
-+        <label htmlFor="confirm">Confirm password</label><input id="confirm" name="confirm" type="password" required minLength={8} maxLength={128} autoComplete="new-password" />
-+      </>}
-+      <button className="button primary auth-submit" disabled={pending} type="submit">{pending ? "Please wait…" : mode === "request" ? "Send reset link" : "Set new password"}</button>
-+    </form>}
-+    <p className="auth-switch"><Link href="/sign-in">Back to sign in</Link></p>
-+  </>;
-+}
 diff --git a/src/lib/auth-contract.ts b/src/lib/auth-contract.ts
-index fb3eb95..fcf881d 100644
+index a88ac21..4ad3ea1 100644
 --- a/src/lib/auth-contract.ts
 +++ b/src/lib/auth-contract.ts
-@@ -40,12 +40,28 @@ export const refresh = z
- export const logout = refresh.extend({
-   access_token: z.string().min(1).max(8192),
- });
-+export const resetRequest = credentials.pick({ email: true });
-+export const passwordUpdate = z.object({ token_hash: z.string().min(1).max(4096), password: z.string().min(8).max(128) }).strict();
+@@ -48,6 +48,14 @@ export const resetPassword = z
+     password: z.string().min(8, "Use at least 8 characters.").max(128),
+   })
+   .strict();
 +export const tokenPasswordChange = logout.extend({
 +  current_password: z.string().min(1).max(128),
 +  new_password: z.string().min(8).max(128),
@@ -295,103 +76,34 @@ index fb3eb95..fcf881d 100644
  export const actions = [
    "sign-up",
    "sign-in",
+@@ -56,6 +64,9 @@ export const actions = [
    "refresh",
    "sign-out",
    "me",
-+  "project",
-+  "request-reset",
-+  "reset-password",
-+  "reauthenticate",
 +  "change-password",
++  "reauthenticate",
 +  "update-profile",
  ] as const;
  export type AuthAction = (typeof actions)[number];
  
-@@ -73,7 +89,7 @@ export function publicUser(user: {
-   user_metadata?: Record<string, unknown>;
- }) {
-   const username = user.user_metadata?.username;
--  const displayName = user.user_metadata?.display_name;
-+  const displayName = user.user_metadata?.display_name ?? user.user_metadata?.full_name;
-   return {
-     id: user.id,
-     email: user.email,
 diff --git a/src/lib/auth-handler.ts b/src/lib/auth-handler.ts
-index 79a58f1..a312e28 100644
+index 582c0ac..d2d1e68 100644
 --- a/src/lib/auth-handler.ts
 +++ b/src/lib/auth-handler.ts
-@@ -8,10 +8,14 @@ import {
-   tokenSignup,
-   refresh,
+@@ -10,6 +10,8 @@ import {
    logout,
-+  resetRequest,
-+  passwordUpdate,
+   forgotPassword,
+   resetPassword,
 +  tokenPasswordChange,
 +  tokenProfileUpdate,
+   recoveryReturnUrl,
    publicUser,
    type AuthAction,
- } from "@/lib/auth-contract";
--import { appOrigin, isConfigured, mobileAppUrl } from "@/lib/config";
-+import { appOrigin, isConfigured, mobileAppUrl, supabaseConfig } from "@/lib/config";
- import { cookieClient, tokenClient } from "@/lib/supabase/server";
- 
- function sessionData(session: Session | null) {
-@@ -64,7 +68,7 @@ export async function handleAuth(
-     return fail("NOT_FOUND", "Unknown auth endpoint.", 404);
-   if (request.method === "OPTIONS" && mode === "token")
-     return new NextResponse(null, { status: 204, headers });
--  const expectedMethod = action === "me" ? "GET" : "POST";
-+  const expectedMethod = action === "me" || action === "project" ? "GET" : "POST";
-   if (request.method !== expectedMethod) {
-     headers.Allow = expectedMethod;
-     return fail(
-@@ -117,6 +121,8 @@ export async function handleAuth(
-     }
-     const client = mode === "cookie" ? await cookieClient() : tokenClient();
- 
-+    if (action === "project") return json({ supabase_url: supabaseConfig().url });
-+
-     if (action === "me") {
-       const bearer = request.headers
-         .get("authorization")
-@@ -130,6 +136,32 @@ export async function handleAuth(
-         return fail("UNAUTHORIZED", "Your session is invalid or expired.", 401);
-       return json({ user: publicUser(data.user) });
-     }
-+    if (action === "request-reset") {
-+      const parsed = resetRequest.safeParse(input);
-+      if (!parsed.success)
-+        return fail("VALIDATION_ERROR", "Enter a valid email address.", 400);
-+      const { error } = await client.auth.resetPasswordForEmail(parsed.data.email, {
-+        redirectTo: `${appOrigin()}/auth/recovery`,
-+      });
-+      if (error?.status === 429)
-+        return fail("RATE_LIMITED", "Too many attempts. Please try later.", 429);
-+      if (error)
-+        return fail("SERVICE_UNAVAILABLE", "Password reset is temporarily unavailable.", 503);
-+      return json({ message: "If this account exists, a password reset link is on its way." });
-+    }
-+    if (action === "reset-password") {
-+      if (mode !== "cookie") return fail("NOT_FOUND", "Unknown auth endpoint.", 404);
-+      const parsed = passwordUpdate.safeParse(input);
-+      if (!parsed.success)
-+        return fail("VALIDATION_ERROR", "Use a valid reset link and a password of 8 to 128 characters.", 400);
-+      const recoveryClient = tokenClient();
-+      const { error: linkError } = await recoveryClient.auth.verifyOtp({ token_hash: parsed.data.token_hash, type: "recovery" });
-+      if (linkError) return fail("INVALID_LINK", "Reset link is invalid or expired.", 401);
-+      const { error } = await recoveryClient.auth.updateUser({ password: parsed.data.password });
-+      if (error) return fail(error.code ?? "PASSWORD_CHANGE_FAILED", error.message, error.status ?? 400);
-+      await recoveryClient.auth.signOut({ scope: "local" });
-+      return json({ message: "Password updated. Sign in with your new password." });
-+    }
-     if (action === "sign-up" || action === "sign-in") {
-       const parsed = (
-         action === "sign-up"
-@@ -259,6 +291,35 @@ export async function handleAuth(
+@@ -339,6 +341,35 @@ export async function handleAuth(
          user: publicUser(data.user!),
        });
      }
-+    if (mode === "token" && ["reauthenticate", "change-password", "update-profile"].includes(action)) {
++    if (mode === "token" && ["change-password", "reauthenticate", "update-profile"].includes(action)) {
 +      const parsed = (action === "change-password" ? tokenPasswordChange : action === "update-profile" ? tokenProfileUpdate : logout).safeParse(input);
 +      if (!parsed.success) return fail("VALIDATION_ERROR", "Invalid account request.", 400);
 +      const { data: active, error: sessionError } = await client.auth.setSession({
@@ -424,79 +136,44 @@ index 79a58f1..a312e28 100644
        const parsed = logout.safeParse(input);
        if (!parsed.success)
 diff --git a/tests/auth-handler.test.ts b/tests/auth-handler.test.ts
-index b9ef4d5..7391d96 100644
+index 6d3e568..b635934 100644
 --- a/tests/auth-handler.test.ts
 +++ b/tests/auth-handler.test.ts
-@@ -10,6 +10,9 @@ const mocks = vi.hoisted(() => ({
-     setSession: vi.fn(),
-     signOut: vi.fn(),
+@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
      verifyOtp: vi.fn(),
-+    resetPasswordForEmail: vi.fn(),
-+    updateUser: vi.fn(),
+     resetPasswordForEmail: vi.fn(),
+     updateUser: vi.fn(),
 +    reauthenticate: vi.fn(),
    },
  }));
  vi.mock("@/lib/supabase/server", () => ({
-@@ -68,6 +71,65 @@ beforeEach(() => {
+@@ -70,6 +71,32 @@ beforeEach(() => {
    vi.stubEnv("ANDROID_APP_REDIRECT_URL", "useauth-android://auth/confirmed");
  });
  
-+describe("account management", () => {
-+  it("reports the configured Supabase project to server consumers", async () => {
-+    const response = await handleAuth(request({}, { method: "GET" }), "project", "token");
-+    expect(response.status).toBe(200);
-+    expect(await response.json()).toEqual({ supabase_url: "https://test.supabase.co" });
-+  });
-+
-+  it("sends reset links to the fixed UseAuth recovery route without revealing account existence", async () => {
-+    mocks.auth.resetPasswordForEmail.mockResolvedValue({ error: null });
-+    const response = await handleAuth(request({ email: "TEST@example.com" }), "request-reset", "token");
-+    expect(response.status).toBe(200);
-+    expect(mocks.auth.resetPasswordForEmail).toHaveBeenCalledWith("test@example.com", {
-+      redirectTo: "https://auth.example.com/auth/recovery",
-+    });
-+    expect(JSON.stringify(await response.json())).not.toContain("test@example.com");
-+  });
-+
-+  it("requires a valid token session to change passwords", async () => {
++describe("account updates for consuming apps", () => {
++  it("requires a valid token session to change the password", async () => {
 +    mocks.auth.setSession.mockResolvedValue({ data: { session: null, user: null }, error: { message: "invalid" } });
 +    const response = await handleAuth(request({ access_token: "access", refresh_token: "refresh", current_password: "old", new_password: "new-secret" }), "change-password", "token");
 +    expect(response.status).toBe(401);
 +    expect(mocks.auth.updateUser).not.toHaveBeenCalled();
 +  });
 +
-+  it("requires a recovery token before setting a forgotten password", async () => {
-+    mocks.auth.verifyOtp.mockResolvedValue({ error: { message: "expired" } });
-+    const response = await handleAuth(request({ token_hash: "expired", password: "new-secret" }, { origin: "https://auth.example.com" }), "reset-password", "cookie");
-+    expect(response.status).toBe(401);
-+    expect(mocks.auth.updateUser).not.toHaveBeenCalled();
-+  });
-+
-+  it("sets the password after verifying the one-time recovery link", async () => {
-+    mocks.auth.verifyOtp.mockResolvedValue({ error: null });
-+    mocks.auth.updateUser.mockResolvedValue({ error: null });
-+    mocks.auth.signOut.mockResolvedValue({ error: null });
-+    const response = await handleAuth(request({ token_hash: "valid-link", password: "new-secret" }, { origin: "https://auth.example.com" }), "reset-password", "cookie");
-+    expect(response.status).toBe(200);
-+    expect(mocks.auth.verifyOtp).toHaveBeenCalledWith({ token_hash: "valid-link", type: "recovery" });
-+    expect(mocks.auth.updateUser).toHaveBeenCalledWith({ password: "new-secret" });
-+  });
-+
-+  it("passes through Supabase reauthentication requirements", async () => {
++  it("requires the current password and relays a reauthentication request", async () => {
 +    mocks.auth.setSession.mockResolvedValue({ data: { session, user }, error: null });
 +    mocks.auth.updateUser.mockResolvedValue({ data: { user: null }, error: { code: "reauthentication_needed", message: "Code required", status: 400 } });
 +    const response = await handleAuth(request({ access_token: "access", refresh_token: "refresh", current_password: "old", new_password: "new-secret" }), "change-password", "token");
 +    expect(response.status).toBe(400);
++    expect(mocks.auth.updateUser).toHaveBeenCalledWith({ password: "new-secret", current_password: "old" });
 +    expect(await response.json()).toEqual({ error: { code: "reauthentication_needed", message: "Code required" } });
 +  });
 +
-+  it("updates only the signed-in user's display name", async () => {
++  it("updates the signed-in user's display name", async () => {
 +    mocks.auth.setSession.mockResolvedValue({ data: { session, user }, error: null });
 +    mocks.auth.updateUser.mockResolvedValue({ data: { user: { ...user, user_metadata: { ...user.user_metadata, display_name: "New name" } } }, error: null });
 +    const response = await handleAuth(request({ access_token: "access", refresh_token: "refresh", display_name: "New name" }), "update-profile", "token");
 +    expect(response.status).toBe(200);
 +    expect(mocks.auth.updateUser).toHaveBeenCalledWith({ data: { display_name: "New name" } });
-+    expect((await response.json()).user.display_name).toBe("New name");
 +  });
 +});
 +

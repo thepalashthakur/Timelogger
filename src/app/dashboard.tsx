@@ -714,7 +714,7 @@ export default function Dashboard() {
     event.preventDefault(); setBusy(true); setError(''); setNotice('');
     try {
       if (mode === 'forgot') {
-        await accountRequest('request-reset', { email: email.trim() });
+        await accountRequest('forgot-password', { email: email.trim() });
         setNotice('If an account exists for this email, a password reset link is on its way.');
       } else if (mode === 'login') {
         const result = await accountRequest('sign-in', { email, password });

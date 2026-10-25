@@ -42,15 +42,6 @@ export async function useAuthRequest(action: string, body?: unknown, accessToken
   return { status: response.status, data };
 }
 
-export async function assertSharedSupabase() {
-  const expected = process.env.SUPABASE_URL?.replace(/\/$/, '');
-  if (!expected) throw new Error('SUPABASE_URL is missing');
-  const { status, data } = await useAuthRequest('project');
-  if (status !== 200 || data.supabase_url?.replace?.(/\/$/, '') !== expected) {
-    throw new Error('UseAuth must be connected to the same Supabase project as Timelogger');
-  }
-}
-
 export function setAuthCookies(response: NextResponse, session: AuthSession) {
   const secure = process.env.NODE_ENV === 'production';
   const options = { httpOnly: true, secure, sameSite: 'lax' as const, path: '/' };

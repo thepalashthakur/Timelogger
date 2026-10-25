@@ -240,11 +240,11 @@ The signed-in top bar now shows only the app name and mobile menu. Email and Sig
 | --- | --- |
 | Sign up, sign in, sign out, and refresh sessions through UseAuth | Implemented in code; deployment requires the same Supabase project |
 | HttpOnly Timelogger session cookies with server-side UseAuth proxy | Implemented |
-| Same-project and account-ID checks before accepting UseAuth sessions | Implemented |
+| Verify UseAuth access tokens against Timelogger’s configured Supabase project | Implemented |
 | Password recovery, password change, reauthentication, and profile updates through UseAuth | Implemented in code |
-| Preserve personal API tokens, Forge, Google Calendar, and existing user-owned data | Implemented; verify after deployment |
+| Preserve API and Forge capabilities on the new project; existing records require migration or recreation | Implemented; verify after deployment |
 
-Apply `integration/useauth-v1.1.0.patch` to the UseAuth repository, deploy that service, point UseAuth to Timelogger’s existing Supabase project, then set `USEAUTH_URL` and deploy Timelogger. UseAuth’s optional username feature requires its separate migration if usernames are used. No Timelogger schema change is required.
+Apply `integration/useauth-v1.1.0.patch` to UseAuth for signed-in account updates; its existing hosted recovery flow is reused. Timelogger now targets the existing UseAuth Supabase project. Apply all Timelogger migrations to that project before deploying; previous Timelogger data is not migrated. Set `USEAUTH_URL`, deploy Timelogger, then recreate personal tokens and relink Jira.
 
 ## v1 — custom time entry properties
 
