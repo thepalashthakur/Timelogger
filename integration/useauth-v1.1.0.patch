@@ -1,4 +1,4 @@
-From 059e38a88dd5af2025eebd90e35d5175d6ed286f Mon Sep 17 00:00:00 2001
+From dd1fbc81370759daf0e2b104b8539dd5b0865445 Mon Sep 17 00:00:00 2001
 From: P <palashthakur.tech@gmail.com>
 Date: Sun, 25 Oct 2026 12:10:46 +0530
 Subject: [PATCH] Add account management API and hosted password recovery
@@ -11,11 +11,12 @@ Subject: [PATCH] Add account management API and hosted password recovery
  src/app/forgot-password/page.tsx |  8 ++++
  src/app/reset-password/page.tsx  | 14 +++++++
  src/components/auth-form.tsx     |  1 +
+ src/components/auth-layout.tsx   |  2 +-
  src/components/password-form.tsx | 58 ++++++++++++++++++++++++++++
  src/lib/auth-contract.ts         | 18 ++++++++-
  src/lib/auth-handler.ts          | 65 +++++++++++++++++++++++++++++++-
  tests/auth-handler.test.ts       | 62 ++++++++++++++++++++++++++++++
- 11 files changed, 263 insertions(+), 13 deletions(-)
+ 12 files changed, 264 insertions(+), 14 deletions(-)
  create mode 100644 src/app/auth/recovery/route.ts
  create mode 100644 src/app/forgot-password/page.tsx
  create mode 100644 src/app/reset-password/page.tsx
@@ -166,7 +167,7 @@ index 0000000..84d1f43
 +}
 diff --git a/src/app/reset-password/page.tsx b/src/app/reset-password/page.tsx
 new file mode 100644
-index 0000000..201be06
+index 0000000..796d3cf
 --- /dev/null
 +++ b/src/app/reset-password/page.tsx
 @@ -0,0 +1,14 @@
@@ -175,7 +176,7 @@ index 0000000..201be06
 +import { PasswordForm } from "@/components/password-form";
 +import { isConfigured } from "@/lib/config";
 +
-+export const metadata = { title: "Reset password" };
++export const metadata = { title: "Reset password", referrer: "no-referrer" as const };
 +export const dynamic = "force-dynamic";
 +
 +export default async function ResetPassword({ searchParams }: { searchParams: Promise<{ token_hash?: string }> }) {
@@ -196,6 +197,19 @@ index 755c6b3..ffbef69 100644
        <div className="auth-security">
          <CheckCircle2 size={14} /> Your password is securely managed by
          Supabase.
+diff --git a/src/components/auth-layout.tsx b/src/components/auth-layout.tsx
+index 813fcf2..2c71eae 100644
+--- a/src/components/auth-layout.tsx
++++ b/src/components/auth-layout.tsx
+@@ -42,7 +42,7 @@ export function AuthLayout({ children }: { children: React.ReactNode }) {
+         <div className="auth-card">{children}</div>
+         <div className="auth-main-footer">
+           <Link href="/docs">Integration guide</Link>
+-          <span>UseAuth v1.0</span>
++          <span>UseAuth v1.1</span>
+         </div>
+       </section>
+     </main>
 diff --git a/src/components/password-form.tsx b/src/components/password-form.tsx
 new file mode 100644
 index 0000000..044f318
