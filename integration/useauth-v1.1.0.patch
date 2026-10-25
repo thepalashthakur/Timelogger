@@ -1,4 +1,4 @@
-From f6d5cbe8495663cf624ea20792eb59949b9c4354 Mon Sep 17 00:00:00 2001
+From 344ca8b6dd6867f97e28b4969cc3d2d940dcb11d Mon Sep 17 00:00:00 2001
 From: P <palashthakur.tech@gmail.com>
 Date: Sun, 25 Oct 2026 12:28:44 +0530
 Subject: [PATCH] Add token account update endpoints for consuming apps
@@ -8,9 +8,9 @@ Subject: [PATCH] Add token account update endpoints for consuming apps
  package-lock.json          |  4 ++--
  package.json               |  2 +-
  src/lib/auth-contract.ts   | 11 +++++++++++
- src/lib/auth-handler.ts    | 31 +++++++++++++++++++++++++++++++
- tests/auth-handler.test.ts | 27 +++++++++++++++++++++++++++
- 6 files changed, 75 insertions(+), 3 deletions(-)
+ src/lib/auth-handler.ts    | 33 +++++++++++++++++++++++++++++++++
+ tests/auth-handler.test.ts | 33 +++++++++++++++++++++++++++++++++
+ 6 files changed, 83 insertions(+), 3 deletions(-)
 
 diff --git a/README.md b/README.md
 index 48f8915..d93f73b 100644
@@ -87,7 +87,7 @@ index a88ac21..4ad3ea1 100644
  export type AuthAction = (typeof actions)[number];
  
 diff --git a/src/lib/auth-handler.ts b/src/lib/auth-handler.ts
-index 582c0ac..d2d1e68 100644
+index 582c0ac..98d50ec 100644
 --- a/src/lib/auth-handler.ts
 +++ b/src/lib/auth-handler.ts
 @@ -10,6 +10,8 @@ import {
@@ -99,10 +99,12 @@ index 582c0ac..d2d1e68 100644
    recoveryReturnUrl,
    publicUser,
    type AuthAction,
-@@ -339,6 +341,35 @@ export async function handleAuth(
+@@ -339,6 +341,37 @@ export async function handleAuth(
          user: publicUser(data.user!),
        });
      }
++    if (mode === "cookie" && ["change-password", "reauthenticate", "update-profile"].includes(action))
++      return fail("NOT_FOUND", "Use the token API for account updates.", 404);
 +    if (mode === "token" && ["change-password", "reauthenticate", "update-profile"].includes(action)) {
 +      const parsed = (action === "change-password" ? tokenPasswordChange : action === "update-profile" ? tokenProfileUpdate : logout).safeParse(input);
 +      if (!parsed.success) return fail("VALIDATION_ERROR", "Invalid account request.", 400);
@@ -136,7 +138,7 @@ index 582c0ac..d2d1e68 100644
        const parsed = logout.safeParse(input);
        if (!parsed.success)
 diff --git a/tests/auth-handler.test.ts b/tests/auth-handler.test.ts
-index 6d3e568..b635934 100644
+index 6d3e568..a784fcf 100644
 --- a/tests/auth-handler.test.ts
 +++ b/tests/auth-handler.test.ts
 @@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
@@ -147,11 +149,17 @@ index 6d3e568..b635934 100644
    },
  }));
  vi.mock("@/lib/supabase/server", () => ({
-@@ -70,6 +71,32 @@ beforeEach(() => {
+@@ -70,6 +71,38 @@ beforeEach(() => {
    vi.stubEnv("ANDROID_APP_REDIRECT_URL", "useauth-android://auth/confirmed");
  });
  
 +describe("account updates for consuming apps", () => {
++  it("does not expose token-only account actions through the hosted route", async () => {
++    const response = await handleAuth(request({}, { origin: "https://auth.example.com" }), "change-password", "cookie");
++    expect(response.status).toBe(404);
++    expect(mocks.auth.signOut).not.toHaveBeenCalled();
++  });
++
 +  it("requires a valid token session to change the password", async () => {
 +    mocks.auth.setSession.mockResolvedValue({ data: { session: null, user: null }, error: { message: "invalid" } });
 +    const response = await handleAuth(request({ access_token: "access", refresh_token: "refresh", current_password: "old", new_password: "new-secret" }), "change-password", "token");
