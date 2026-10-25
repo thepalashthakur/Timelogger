@@ -234,6 +234,18 @@ Apply the migration, deploy the web app, then deploy Forge. Existing Jira-source
 
 The signed-in top bar now shows only the app name and mobile menu. Email and Sign out are in the sidebar; Appearance remains in Settings. No migration is required.
 
+## v0.17 — shared UseAuth account service
+
+| Feature | Status |
+| --- | --- |
+| Sign up, sign in, sign out, and refresh sessions through UseAuth | Implemented in code; deployment requires the same Supabase project |
+| HttpOnly Timelogger session cookies with server-side UseAuth proxy | Implemented |
+| Same-project and account-ID checks before accepting UseAuth sessions | Implemented |
+| Password recovery, password change, reauthentication, and profile updates through UseAuth | Implemented in code |
+| Preserve personal API tokens, Forge, Google Calendar, and existing user-owned data | Implemented; verify after deployment |
+
+Apply `integration/useauth-v1.1.0.patch` to the UseAuth repository, deploy that service, point UseAuth to Timelogger’s existing Supabase project, then set `USEAUTH_URL` and deploy Timelogger. UseAuth’s optional username feature requires its separate migration if usernames are used. No Timelogger schema change is required.
+
 ## v1 — custom time entry properties
 
 | Feature | Status |

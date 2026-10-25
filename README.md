@@ -1,15 +1,25 @@
 # Timelogger
 
-A Vercel ready Next.js time tracker using Supabase Auth, Supabase Postgres, and Material UI.
+A Vercel ready Next.js time tracker using UseAuth, Supabase Postgres, and Material UI.
 
 ## Deploy the web app
 
 These steps use the existing Supabase project and the Vercel project connected to this repository. The Jira issue panel is a separate Forge deployment described below.
 
+### UseAuth prerequisite for v0.17
+
+The UseAuth v1.1.0 change is included as [an applyable patch](integration/useauth-v1.1.0.patch). The UseAuth repository is outside this workspace's writable root, so apply it from a shell with write access to that repository:
+
+```sh
+git -C ../UseAuth am ../Timelogger/integration/useauth-v1.1.0.patch
+```
+
+Deploy UseAuth first. In its Vercel settings, change **both** `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` to the existing Timelogger Supabase project. Keep `APP_URL` set to the UseAuth production origin. Configure the Supabase confirmation and recovery redirect URLs and email templates in the UseAuth README. Do not switch UseAuth to another database with different user IDs. After UseAuth is live and points at the shared project, set Timelogger's `USEAUTH_URL` and deploy this version. Timelogger checks the project URL and existing user identity before accepting a session.
+
 1. **Apply the database migrations.** In the Supabase SQL Editor, review and run `supabase/schema.sql`, then `supabase/api_tokens.sql`, then `supabase/catalog.sql`, then `supabase/calendar_sync.sql`, then `supabase/calendar_webhook.sql`, then `supabase/google_calendar.sql`, then `supabase/task_hierarchy.sql`, then `supabase/jira_task_links.sql` for a new Timelogger installation. For an existing installation, apply only migrations that have not yet been run. The v0.16 Jira link migration creates only a new `timelogger_` table and does not alter existing tables or data. Do not rerun a migration that has already been applied.
-2. **Configure Supabase Auth.** Enable email/password sign-in and **Confirm email**. Set Authentication → URL Configuration → Site URL to your deployed web app URL (currently `https://timelogger-gilt.vercel.app`). Add redirect URLs for localhost or previews only if you explicitly route auth emails there. Configure an email sender that can deliver confirmation and password reset emails.
-3. **Set the Vercel environment variables.** In the Timelogger project's Vercel settings, add `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` to the Production environment. Use the Supabase project URL, its anon/publishable key, and its service role key respectively. The service role key is required for personal API tokens and stays server-side; never put it in browser code or Forge. Add the same values to Preview only if you deploy previews. Redeploy after changing environment variables.
-4. **Check the app locally.** From the repository root, copy `.env.example` to `.env.local`, fill in the three values, then run:
+2. **Configure Supabase Auth and UseAuth.** Enable email/password sign-in and **Confirm email**. Point UseAuth at the same Supabase project as Timelogger. Set the Supabase Site URL to the UseAuth production origin and allow its `/auth/confirm` and `/auth/recovery` redirects. Configure the confirmation and recovery email templates as described in the UseAuth README. Existing Timelogger user IDs remain unchanged only when both services use the same Supabase project.
+3. **Set the Vercel environment variables.** In the Timelogger project's Vercel settings, add `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `USEAUTH_URL` to the Production environment. Use the Supabase project URL, its anon/publishable key, and its service role key respectively. Set `USEAUTH_URL` to the exact HTTPS UseAuth origin, such as `https://use-auth-rosy.vercel.app`, without a trailing slash. The service role key is required for personal API tokens and stays server-side; never put it in browser code or Forge. Add the same values to Preview only if you deploy previews. Redeploy after changing environment variables.
+4. **Check the app locally.** From the repository root, copy `.env.example` to `.env.local`, fill in the Supabase values and UseAuth URL, then run:
 
    ```sh
    npm install
@@ -24,9 +34,9 @@ For local development, `.env.local` is ignored by Git. Do not commit keys or per
 
 ## Password recovery
 
-On the sign-in screen, **Forgot password?** asks Supabase to send a reset email. Supabase uses the project's **Site URL** as the return address; Timelogger does not supply a separate reset redirect URL. Opening the link shows a new-password form, then signs the user out so they can sign in with the new password. The message after requesting a link is the same whether or not the email belongs to an account.
+On the sign-in screen, **Forgot password?** asks UseAuth to send a reset email. The link opens UseAuth’s hosted new-password form. The message after requesting a link is the same whether or not the email belongs to an account.
 
-Signed-in users can change their password in **Settings**. They must provide their current password; Timelogger verifies it using a separate, nonpersistent Supabase client before applying the change. If Supabase requires reauthentication for an older session, **Send verification code** emails a code to enter with the change. No Timelogger database migration is required.
+Signed-in users can change their password in **Settings** through UseAuth by providing their current password. If Supabase requires reauthentication for an older session, **Send verification code** emails a code to enter with the change. Timelogger stores UseAuth sessions in HttpOnly cookies; its personal API tokens and Forge integration continue to work. No Timelogger database migration is required.
 
 ## Deploy the Jira issue panel
 

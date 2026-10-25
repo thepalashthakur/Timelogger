@@ -1,13 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { tokenClient } from './supabase';
 import { adminClient, tokenHash } from './admin';
+import { accessCookie, sameOriginMutation } from './useauth';
 
 function bearer(req: NextRequest) {
   return /^Bearer\s+(.+)$/i.exec(req.headers.get('authorization') ?? '')?.[1] ?? null;
 }
 
+function sessionToken(req: NextRequest) {
+  const explicit = bearer(req);
+  if (explicit) return explicit;
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOriginMutation(req)) return null;
+  return req.cookies.get(accessCookie)?.value ?? null;
+}
+
 export async function authenticatedUser(req: NextRequest) {
-  const token = bearer(req);
+  const token = sessionToken(req);
   if (!token || token.startsWith('tl_')) return null;
   const client = tokenClient(token);
   const { data, error } = await client.auth.getUser(token);
@@ -15,7 +23,7 @@ export async function authenticatedUser(req: NextRequest) {
 }
 
 export async function authenticated(req: NextRequest) {
-  const token = bearer(req);
+  const token = sessionToken(req);
   if (!token) return null;
   if (!token.startsWith('tl_')) return authenticatedUser(req);
   if (!/^tl_[A-Za-z0-9_-]{43}$/.test(token)) return null;

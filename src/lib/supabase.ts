@@ -7,16 +7,6 @@ export function config() {
   return { url, key };
 }
 
-export function browserClient(url: string, key: string) {
-  return createClient(url, key);
-}
-
-export function passwordCheckClient(url: string, key: string) {
-  return createClient(url, key, {
-    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-  });
-}
-
 export function tokenClient(token: string) {
   const { url, key } = config();
   return createClient(url, key, {

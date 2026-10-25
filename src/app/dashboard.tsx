@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
-import type { Session } from '@supabase/supabase-js';
 import {
   Accordion, AccordionDetails, AccordionSummary, Alert, AppBar, Autocomplete, Avatar, Box, Breadcrumbs, Button, ButtonBase, Card, CardContent, Chip, CircularProgress,
   Container, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Drawer, Grid,
@@ -16,7 +15,7 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import dayjs, { type Dayjs } from 'dayjs';
 import { alpha, getContrastRatio } from '@mui/material/styles';
-import { browserClient, passwordCheckClient, type TimeEntry } from '@/lib/supabase';
+import { type TimeEntry } from '@/lib/supabase';
 import { addDays, layoutDay, startOfWeek } from '@/lib/timeline';
 import { calendarScript } from '@/lib/calendar-script';
 import { findEntryTask, taskLineage } from '@/lib/entry-insights';
@@ -77,21 +76,33 @@ function tagTextColor(color: string) {
   return getContrastRatio(color, '#fff') >= 4.5 ? '#fff' : '#000';
 }
 
-export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUrl: string; supabaseAnonKey: string }) {
-  const supabase = useMemo(() => browserClient(supabaseUrl, supabaseAnonKey), [supabaseUrl, supabaseAnonKey]);
-  const [session, setSession] = useState<Session | null>(null);
+type AccountUser = { id: string; email: string; email_verified: boolean; created_at: string; display_name: string | null };
+
+class AccountError extends Error {
+  constructor(message: string, readonly code?: string) { super(message); }
+}
+
+async function accountRequest(action: string, body: Record<string, unknown>) {
+  const response = await fetch(`/api/auth/${action}`, {
+    method: 'POST', credentials: 'same-origin', cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const result = await response.json();
+  if (!response.ok) throw new AccountError(result.error ?? 'Account request failed', result.code);
+  return result as { user?: AccountUser; message?: string };
+}
+
+export default function Dashboard() {
+  const [session, setSession] = useState<{ user: AccountUser } | null>(null);
   const [ready, setReady] = useState(false);
+  const [authProblem, setAuthProblem] = useState('');
   const [mode, setMode] = useState<'login' | 'signup' | 'forgot'>('login');
-  const [recoveryMode, setRecoveryMode] = useState(false);
-  const recoveryLinkRef = useRef(typeof window !== 'undefined' && new URLSearchParams(window.location.hash.slice(1)).get('type') === 'recovery');
   const [view, setView] = useState<View>('dashboard');
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [profileName, setProfileName] = useState('');
   const [profileError, setProfileError] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [recoveryPassword, setRecoveryPassword] = useState('');
-  const [recoveryConfirm, setRecoveryConfirm] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -188,21 +199,35 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
-  useEffect(() => {
-    if (recoveryLinkRef.current) setRecoveryMode(true);
-    const { data: listener } = supabase.auth.onAuthStateChange((event, next) => {
-      setSession(next);
-      if (event === 'PASSWORD_RECOVERY') setRecoveryMode(true);
-      if (event === 'SIGNED_OUT') setRecoveryMode(false);
-      setReady(true);
-    });
-    supabase.auth.getSession().then(({ data }) => { setSession(data.session); setReady(true); });
-    return () => listener.subscription.unsubscribe();
-  }, [supabase]);
+  const pendingRefresh = useRef<Promise<boolean> | null>(null);
+  const refreshAccount = useCallback(() => {
+    if (!pendingRefresh.current) {
+      pendingRefresh.current = (async () => {
+        try {
+          const response = await fetch('/api/auth/session', { cache: 'no-store' });
+          const body = await response.json();
+          setSession(response.ok && body.user ? { user: body.user } : null);
+          setAuthProblem(response.status >= 500 ? body.error ?? 'Authentication is temporarily unavailable' : '');
+          return response.ok;
+        } catch {
+          setAuthProblem('Could not reach the authentication service');
+          return false;
+        }
+      })().finally(() => { pendingRefresh.current = null; });
+    }
+    return pendingRefresh.current;
+  }, []);
 
   useEffect(() => {
-    setProfileName(typeof session?.user.user_metadata?.full_name === 'string' ? session.user.user_metadata.full_name : '');
-  }, [session?.user.user_metadata?.full_name]);
+    void refreshAccount().finally(() => setReady(true));
+    const onVisible = () => { if (document.visibilityState === 'visible') void refreshAccount(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [refreshAccount]);
+
+  useEffect(() => {
+    setProfileName(session?.user.display_name ?? '');
+  }, [session?.user.display_name]);
 
   useEffect(() => {
     const syncView = () => {
@@ -223,17 +248,13 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   }, [searchInput, search]);
 
   const request = useCallback(async (path: string, init?: RequestInit) => {
-    const { data } = await supabase.auth.getSession();
-    if (!data.session) throw new Error('Please sign in again');
-    const response = await fetch(path, {
-      ...init,
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session.access_token}`, ...init?.headers },
-      cache: 'no-store',
-    });
+    const options = { ...init, credentials: 'same-origin' as const, headers: { 'Content-Type': 'application/json', ...init?.headers }, cache: 'no-store' as const };
+    let response = await fetch(path, options);
+    if (response.status === 401 && await refreshAccount()) response = await fetch(path, options);
     const body = await response.json();
     if (!response.ok) throw new Error(body.error || 'Request failed');
     return body;
-  }, [supabase]);
+  }, [refreshAccount]);
 
   const loadCatalog = useCallback(async () => {
     if (!session) return;
@@ -426,8 +447,8 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     setProfileError('');
     setBusy(true);
     try {
-      const { error: updateError } = await supabase.auth.updateUser({ data: { full_name: profileName.trim() } });
-      if (updateError) throw updateError;
+      const result = await accountRequest('update-profile', { display_name: profileName.trim() });
+      if (result.user) setSession({ user: result.user });
       setNotice('Profile updated');
     } catch (caught) {
       setProfileError(caught instanceof Error ? caught.message : 'Could not update profile');
@@ -693,35 +714,17 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
     event.preventDefault(); setBusy(true); setError(''); setNotice('');
     try {
       if (mode === 'forgot') {
-        const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
-        if (error) throw error;
+        await accountRequest('request-reset', { email: email.trim() });
         setNotice('If an account exists for this email, a password reset link is on its way.');
       } else if (mode === 'login') {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
+        const result = await accountRequest('sign-in', { email, password });
+        if (result.user) setSession({ user: result.user });
       } else {
-        const { data, error } = await supabase.auth.signUp({ email, password });
-        if (error) throw error;
-        if (!data.session) setNotice('Account created. Check your email to confirm it, then sign in.');
+        const result = await accountRequest('sign-up', { email, password });
+        if (result.user) setSession({ user: result.user });
+        else setNotice('If this address can be registered, a confirmation email will arrive shortly.');
       }
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Authentication failed'); }
-    finally { setBusy(false); }
-  }
-
-  async function finishPasswordRecovery(event: React.FormEvent) {
-    event.preventDefault(); setBusy(true); setError(''); setNotice('');
-    try {
-      if (!session) throw new Error('This reset link is expired or invalid. Request a new one.');
-      if (recoveryPassword.length < 8) throw new Error('Use at least 8 characters for your new password');
-      if (recoveryPassword !== recoveryConfirm) throw new Error('New passwords do not match');
-      const { error } = await supabase.auth.updateUser({ password: recoveryPassword });
-      if (error) throw error;
-      setRecoveryPassword(''); setRecoveryConfirm(''); setPassword(''); setMode('login');
-      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
-      const { error: signOutError } = await supabase.auth.signOut();
-      setRecoveryMode(false);
-      setNotice(signOutError ? 'Password updated. Sign out, then sign in with your new password.' : 'Password updated. Sign in with your new password.');
-    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not update password'); }
     finally { setBusy(false); }
   }
 
@@ -732,20 +735,16 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
       if (newPassword !== confirmPassword) throw new Error('New passwords do not match');
       if (newPassword === currentPassword) throw new Error('Choose a different password');
       if (!session?.user.email) throw new Error('This account has no email password to change');
-      const verifier = passwordCheckClient(supabaseUrl, supabaseAnonKey);
-      const { data: verified, error: verifyError } = await verifier.auth.signInWithPassword({ email: session.user.email, password: currentPassword });
-      if (verifyError || verified.user?.id !== session.user.id) throw new Error('Current password is incorrect');
-      await verifier.auth.signOut({ scope: 'local' });
-      const { error } = await supabase.auth.updateUser({
-        password: newPassword, current_password: currentPassword,
-        ...(changeNonce ? { nonce: changeNonce.trim() } : {}),
-      });
-      if (error?.code === 'reauthentication_needed') {
-        setChangeRequiresCode(true);
-        setChangeError('Supabase requires an email verification code for this session. Send a code, then try again.');
-        return;
+      try {
+        await accountRequest('change-password', { current_password: currentPassword, new_password: newPassword, ...(changeNonce ? { nonce: changeNonce.trim() } : {}) });
+      } catch (caught) {
+        if (caught instanceof AccountError && caught.code === 'reauthentication_needed') {
+          setChangeRequiresCode(true);
+          setChangeError('A verification code is required for this session. Send a code, then try again.');
+          return;
+        }
+        throw caught;
       }
-      if (error) throw error;
       setCurrentPassword(''); setNewPassword(''); setConfirmPassword(''); setChangeNonce(''); setChangeCodeSent(false); setChangeRequiresCode(false);
       setNotice('Password changed');
     } catch (caught) { setChangeError(caught instanceof Error ? caught.message : 'Could not change password'); }
@@ -755,11 +754,17 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
   async function sendPasswordChangeCode() {
     setBusy(true); setChangeError('');
     try {
-      const { error } = await supabase.auth.reauthenticate();
-      if (error) throw error;
+      await accountRequest('reauthenticate', {});
       setChangeCodeSent(true);
       setNotice('A verification code was sent to your email');
     } catch (caught) { setChangeError(caught instanceof Error ? caught.message : 'Could not send verification code'); }
+    finally { setBusy(false); }
+  }
+
+  async function signOut() {
+    setBusy(true);
+    try { await accountRequest('sign-out', {}); setSession(null); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not sign out'); }
     finally { setBusy(false); }
   }
 
@@ -864,30 +869,17 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
 
   if (!ready) return <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><CircularProgress aria-label="Loading Timelogger" /></Box>;
 
-  if (recoveryMode) return <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center', bgcolor: 'background.default', p: 2 }}>
-    <Box sx={{ position: 'absolute', top: 16, right: 16 }}><AppearanceControl /></Box>
-    <Card sx={{ width: '100%', maxWidth: 440, borderRadius: 3, boxShadow: 3 }}><CardContent sx={{ p: { xs: 3, sm: 4 } }}><Stack spacing={3}>
-      <Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Timelogger</Typography><Typography color="text.secondary">Reset your password</Typography></Box>
-      {error && <Alert severity="error">{error}</Alert>}
-      {session ? <Box component="form" onSubmit={finishPasswordRecovery}><Stack spacing={2}>
-        <TextField label="New password" type="password" value={recoveryPassword} onChange={(event) => setRecoveryPassword(event.target.value)} required fullWidth autoComplete="new-password" slotProps={{ htmlInput: { minLength: 8 } }} />
-        <TextField label="Confirm new password" type="password" value={recoveryConfirm} onChange={(event) => setRecoveryConfirm(event.target.value)} required fullWidth autoComplete="new-password" slotProps={{ htmlInput: { minLength: 8 } }} />
-        <Button variant="contained" size="large" type="submit" disabled={busy}>Set new password</Button>
-      </Stack></Box> : <><Alert severity="warning">This reset link could not be verified. Request a new link and try again.</Alert><Button onClick={() => { setRecoveryMode(false); setMode('forgot'); setError(''); }}>Request another link</Button></>}
-    </Stack></CardContent></Card>
-  </Box>;
-
   if (!session) return <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center', bgcolor: 'background.default', p: 2 }}>
     <Box sx={{ position: 'absolute', top: 16, right: 16 }}><AppearanceControl /></Box>
     <Card sx={{ width: '100%', maxWidth: 440, borderRadius: 3, boxShadow: 3 }}><CardContent sx={{ p: { xs: 3, sm: 4 } }}>
       <Stack spacing={3}>
         <Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Timelogger</Typography><Typography color="text.secondary">Your time, clearly accounted for.</Typography></Box>
         <Typography variant="h6">{mode === 'login' ? 'Sign in' : mode === 'signup' ? 'Create an account' : 'Forgot your password?'}</Typography>
-        {error && <Alert severity="error">{error}</Alert>}
+        {(error || authProblem) && <Alert severity="error">{error || authProblem}</Alert>}
         {notice && <Alert severity="success">{notice}</Alert>}
         <Box component="form" onSubmit={authenticate}><Stack spacing={2}>
           <TextField label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required fullWidth autoComplete="email" />
-          {mode !== 'forgot' && <TextField label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required fullWidth autoComplete={mode === 'login' ? 'current-password' : 'new-password'} slotProps={{ htmlInput: { minLength: 6 } }} />}
+          {mode !== 'forgot' && <TextField label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required fullWidth autoComplete={mode === 'login' ? 'current-password' : 'new-password'} slotProps={{ htmlInput: { minLength: mode === 'signup' ? 8 : 1 } }} />}
           <Button variant="contained" size="large" type="submit" disabled={busy}>{mode === 'login' ? 'Sign in' : mode === 'signup' ? 'Sign up' : 'Send reset link'}</Button>
         </Stack></Box>
         {mode === 'login' ? <Stack><Button onClick={() => { setMode('forgot'); setError(''); setNotice(''); }}>Forgot password?</Button><Button onClick={() => { setMode('signup'); setError(''); setNotice(''); }}>Need an account? Sign up</Button></Stack>
@@ -903,7 +895,7 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
       {navigationItems.map((item) => <ListItemButton key={item.value} selected={view === item.value} aria-current={view === item.value ? 'page' : undefined} onClick={() => navigate(item.value)} sx={{ borderRadius: 1.5, mb: 0.5 }}><ListItemText primary={item.label} /></ListItemButton>)}
     </List>
     <Divider />
-    <Box sx={{ px: 2, pt: 2, minWidth: 0 }}><Typography variant="body2" color="text.secondary" noWrap title={session.user.email}>{session.user.email}</Typography><Button sx={{ mt: 1 }} onClick={() => void supabase.auth.signOut()}>Sign out</Button></Box>
+    <Box sx={{ px: 2, pt: 2, minWidth: 0 }}><Typography variant="body2" color="text.secondary" noWrap title={session.user.email}>{session.user.email}</Typography><Button sx={{ mt: 1 }} onClick={() => void signOut()} disabled={busy}>Sign out</Button></Box>
   </Box>;
 
   return <LocalizationProvider dateAdapter={AdapterDayjs}><Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
@@ -1028,10 +1020,10 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
             <TextField label="Display name" value={profileName} onChange={(event) => setProfileName(event.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 100 } }} />
             <TextField label="Email" value={session.user.email ?? ''} fullWidth slotProps={{ htmlInput: { readOnly: true } }} helperText="Email changes are managed through your account provider." />
             {profileError && <Alert severity="error">{profileError}</Alert>}
-            <Box><Button type="submit" variant="contained" disabled={busy || profileName.trim() === (session.user.user_metadata?.full_name ?? '')}>Save profile</Button></Box>
+            <Box><Button type="submit" variant="contained" disabled={busy || profileName.trim() === (session.user.display_name ?? '')}>Save profile</Button></Box>
           </Stack></Box>
           <Divider />
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}><Box><Typography variant="body2" color="text.secondary">Member since</Typography><Typography>{new Date(session.user.created_at).toLocaleDateString()}</Typography></Box><Box><Typography variant="body2" color="text.secondary">Email status</Typography><Chip size="small" label={session.user.email_confirmed_at ? 'Verified' : 'Unverified'} color={session.user.email_confirmed_at ? 'success' : 'warning'} /></Box><Button onClick={() => navigate('settings')}>Account settings</Button></Stack>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}><Box><Typography variant="body2" color="text.secondary">Member since</Typography><Typography>{new Date(session.user.created_at).toLocaleDateString()}</Typography></Box><Box><Typography variant="body2" color="text.secondary">Email status</Typography><Chip size="small" label={session.user.email_verified ? 'Verified' : 'Unverified'} color={session.user.email_verified ? 'success' : 'warning'} /></Box><Button onClick={() => navigate('settings')}>Account settings</Button></Stack>
         </Stack></Paper>
       </Stack></Box>}
       {view === 'settings' && <Box id="panel-settings"><Stack spacing={3}>
