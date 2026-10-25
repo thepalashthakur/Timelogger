@@ -55,7 +55,7 @@ export async function GET(request: NextRequest, { params }: Context) {
 export async function POST(request: NextRequest, { params }: Context) {
   if (!sameOriginMutation(request)) return reply({ error: 'Forbidden' }, 403);
   const { action } = await params;
-  if (!['sign-up', 'sign-in', 'sign-out', 'forgot-password', 'change-password', 'reauthenticate', 'update-profile'].includes(action)) return reply({ error: 'Not found' }, 404);
+  if (!['sign-up', 'sign-in', 'sign-out', 'forgot-password', 'resend-confirmation', 'change-password', 'reauthenticate', 'update-profile'].includes(action)) return reply({ error: 'Not found' }, 404);
   let input: Record<string, unknown>;
   try {
     const raw = await request.text();
@@ -69,7 +69,7 @@ export async function POST(request: NextRequest, { params }: Context) {
       if (tokens.access_token && tokens.refresh_token) await useAuthRequest('sign-out', tokens).catch(() => null);
       const response = reply({ signed_out: true }); clearAuthCookies(response); return response;
     }
-    if (action === 'sign-in' || action === 'sign-up' || action === 'forgot-password') {
+    if (action === 'sign-in' || action === 'sign-up' || action === 'forgot-password' || action === 'resend-confirmation') {
       const result = await useAuthRequest(action, input);
       if (result.status < 200 || result.status >= 300) return failure(result);
       if (sessionData(result.data.session)) {

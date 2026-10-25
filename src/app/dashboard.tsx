@@ -103,6 +103,7 @@ export default function Dashboard() {
   const [profileError, setProfileError] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [pendingConfirmationEmail, setPendingConfirmationEmail] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -722,9 +723,19 @@ export default function Dashboard() {
       } else {
         const result = await accountRequest('sign-up', { email, password });
         if (result.user) setSession({ user: result.user });
-        else setNotice('If this address can be registered, a confirmation email will arrive shortly.');
+        else { setPendingConfirmationEmail(email.trim()); setPassword(''); }
       }
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Authentication failed'); }
+    finally { setBusy(false); }
+  }
+
+  async function resendConfirmation(address: string) {
+    if (!address.trim()) { setError('Enter your email address first.'); return; }
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const result = await accountRequest('resend-confirmation', { email: address.trim() });
+      setNotice(result.message ?? 'If this address needs confirmation, a new link will arrive shortly.');
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Unable to resend confirmation.'); }
     finally { setBusy(false); }
   }
 
@@ -874,16 +885,21 @@ export default function Dashboard() {
     <Card sx={{ width: '100%', maxWidth: 440, borderRadius: 3, boxShadow: 3 }}><CardContent sx={{ p: { xs: 3, sm: 4 } }}>
       <Stack spacing={3}>
         <Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Timelogger</Typography><Typography color="text.secondary">Your time, clearly accounted for.</Typography></Box>
-        <Typography variant="h6">{mode === 'login' ? 'Sign in' : mode === 'signup' ? 'Create an account' : 'Forgot your password?'}</Typography>
+        <Typography variant="h6">{pendingConfirmationEmail ? 'Check your email' : mode === 'login' ? 'Sign in' : mode === 'signup' ? 'Create an account' : 'Forgot your password?'}</Typography>
         {(error || authProblem) && <Alert severity="error">{error || authProblem}</Alert>}
         {notice && <Alert severity="success">{notice}</Alert>}
-        <Box component="form" onSubmit={authenticate}><Stack spacing={2}>
+        {pendingConfirmationEmail ? <Stack spacing={2}>
+          <Typography>UseAuth sends the confirmation email for your shared account. Open its confirmation link first. When UseAuth shows your account, return here and sign in with the same email and password.</Typography>
+          <Typography variant="body2" color="text.secondary">If this address can be registered, the email will arrive shortly. Check spam if you do not see it.</Typography>
+          <Button onClick={() => void resendConfirmation(pendingConfirmationEmail)} disabled={busy}>Resend confirmation email</Button>
+          <Button onClick={() => { setPendingConfirmationEmail(''); setMode('login'); setError(''); setNotice(''); }}>Back to sign in</Button>
+        </Stack> : <><Box component="form" onSubmit={authenticate}><Stack spacing={2}>
           <TextField label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required fullWidth autoComplete="email" />
           {mode !== 'forgot' && <TextField label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required fullWidth autoComplete={mode === 'login' ? 'current-password' : 'new-password'} slotProps={{ htmlInput: { minLength: mode === 'signup' ? 8 : 1 } }} />}
           <Button variant="contained" size="large" type="submit" disabled={busy}>{mode === 'login' ? 'Sign in' : mode === 'signup' ? 'Sign up' : 'Send reset link'}</Button>
         </Stack></Box>
-        {mode === 'login' ? <Stack><Button onClick={() => { setMode('forgot'); setError(''); setNotice(''); }}>Forgot password?</Button><Button onClick={() => { setMode('signup'); setError(''); setNotice(''); }}>Need an account? Sign up</Button></Stack>
-          : <Button onClick={() => { setMode('login'); setError(''); setNotice(''); }}>Back to sign in</Button>}
+        {mode === 'login' ? <Stack><Typography variant="body2" color="text.secondary">Just registered? Confirm the email sent by UseAuth before signing in here.</Typography><Button onClick={() => void resendConfirmation(email)} disabled={busy || !email.trim()}>Resend confirmation email</Button><Button onClick={() => { setMode('forgot'); setError(''); setNotice(''); }}>Forgot password?</Button><Button onClick={() => { setMode('signup'); setError(''); setNotice(''); }}>Need an account? Sign up</Button></Stack>
+          : <Button onClick={() => { setMode('login'); setError(''); setNotice(''); }}>Back to sign in</Button>}</>}
       </Stack>
     </CardContent></Card>
   </Box>;
