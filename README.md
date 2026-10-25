@@ -36,7 +36,7 @@ For local development, `.env.local` is ignored by Git. Do not commit keys or per
 
 On the sign-in screen, **Forgot password?** asks UseAuth to send a reset email. The link opens UseAuth’s existing hosted new-password form. After resetting, the user can return to Timelogger and sign in. The message after requesting a link is the same whether or not the email belongs to an account.
 
-Signed-in users can change their password in **Settings** through UseAuth by providing their current password. If Supabase requires reauthentication for an older session, **Send verification code** emails a code to enter with the change. Timelogger stores UseAuth sessions in HttpOnly cookies; its personal API tokens and Forge integration continue to work. No Timelogger database migration is required.
+Signed-in users can change their password in **Settings** through UseAuth by providing their current password. If Supabase requires reauthentication for an older session, **Send verification code** emails a code to enter with the change. Timelogger stores UseAuth sessions in HttpOnly cookies; its personal API tokens and Forge integration continue to work. No additional migration is needed for password changes after the base Timelogger schema is installed.
 
 ## Deploy the Jira issue panel
 
