@@ -230,6 +230,10 @@ The signed-in password form shows no email-code action by default. If Supabase r
 
 Apply the migration, deploy the web app, then deploy Forge. Existing Jira-sourced tasks get links when their issues are synced again by starting a timer from the Jira panel. Manually created child tasks remain local to Timelogger and have no Jira link.
 
+### v0.16.1 — simplified top bar
+
+The signed-in top bar now shows only the app name and mobile menu. Email and Sign out are in the sidebar; Appearance remains in Settings. No migration is required.
+
 ## v1 — custom time entry properties
 
 | Feature | Status |

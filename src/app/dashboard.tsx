@@ -903,11 +903,11 @@ export default function Dashboard({ supabaseUrl, supabaseAnonKey }: { supabaseUr
       {navigationItems.map((item) => <ListItemButton key={item.value} selected={view === item.value} aria-current={view === item.value ? 'page' : undefined} onClick={() => navigate(item.value)} sx={{ borderRadius: 1.5, mb: 0.5 }}><ListItemText primary={item.label} /></ListItemButton>)}
     </List>
     <Divider />
-    <Box sx={{ px: 2, pt: 2, minWidth: 0 }}><Typography variant="body2" color="text.secondary" noWrap title={session.user.email}>{session.user.email}</Typography></Box>
+    <Box sx={{ px: 2, pt: 2, minWidth: 0 }}><Typography variant="body2" color="text.secondary" noWrap title={session.user.email}>{session.user.email}</Typography><Button sx={{ mt: 1 }} onClick={() => void supabase.auth.signOut()}>Sign out</Button></Box>
   </Box>;
 
   return <LocalizationProvider dateAdapter={AdapterDayjs}><Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
-    <AppBar position="sticky" color="default" elevation={0} sx={{ borderBottom: 1, borderColor: 'divider' }}><Toolbar sx={{ gap: 1 }}><Button sx={{ display: { xs: 'inline-flex', md: 'none' } }} aria-label="Open navigation" onClick={() => setMobileNavigationOpen(true)}>Menu</Button><Typography variant="h6" sx={{ flexGrow: 1, fontWeight: 700 }}>Timelogger</Typography><Typography variant="body2" sx={{ display: { xs: 'none', lg: 'block' }, mr: 1 }}>{session.user.email}</Typography><Box sx={{ display: { xs: 'none', sm: 'block' } }}><AppearanceControl /></Box><Button color="inherit" onClick={() => void supabase.auth.signOut()}>Sign out</Button></Toolbar></AppBar>
+    <AppBar position="sticky" color="default" elevation={0} sx={{ borderBottom: 1, borderColor: 'divider' }}><Toolbar sx={{ gap: 1 }}><Button sx={{ display: { xs: 'inline-flex', md: 'none' } }} aria-label="Open navigation" onClick={() => setMobileNavigationOpen(true)}>Menu</Button><Typography variant="h6" sx={{ fontWeight: 700 }}>Timelogger</Typography></Toolbar></AppBar>
     <Box sx={{ display: 'flex' }}>
       <Box component="nav" aria-label="Timelogger sections" sx={{ width: { md: 240 }, flexShrink: { md: 0 } }}>
         <Drawer variant="temporary" open={mobileNavigationOpen} onClose={() => setMobileNavigationOpen(false)} ModalProps={{ keepMounted: true }} sx={{ display: { xs: 'block', md: 'none' }, '& .MuiDrawer-paper': { width: 260, boxSizing: 'border-box' } }}>{sidebarContent}</Drawer>
