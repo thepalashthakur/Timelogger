@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { tokenClient } from '@/lib/supabase';
 import { authCookies, clearAuthCookies, sameOriginMutation, setAuthCookies, useAuthRequest, type AuthSession, type AuthUser } from '@/lib/useauth';
+import { hasSessionAppAccess } from '@/lib/app-access';
 
 export const dynamic = 'force-dynamic';
 type Context = { params: Promise<{ action: string }> };
@@ -44,6 +45,11 @@ export async function GET(request: NextRequest, { params }: Context) {
     }
     if (!result || result.status !== 200 || !result.data.user) return failure(result ?? { status: 401, data: {} });
     if (!await localUserMatches(result.data.user, nextSession?.access_token ?? tokens.access_token ?? '')) return reply({ error: 'This UseAuth session belongs to a different Supabase project' }, 503);
+    if (!await hasSessionAppAccess(nextSession?.access_token ?? tokens.access_token ?? '')) {
+      const response = reply({ error: 'Access to Time Logger is not enabled for this account' }, 403);
+      clearAuthCookies(response);
+      return response;
+    }
     const response = reply({ user: result.data.user });
     if (nextSession) setAuthCookies(response, nextSession);
     return response;
@@ -74,6 +80,10 @@ export async function POST(request: NextRequest, { params }: Context) {
       if (result.status < 200 || result.status >= 300) return failure(result);
       if (sessionData(result.data.session)) {
         if (!result.data.user || !await localUserMatches(result.data.user, result.data.session.access_token)) return reply({ error: 'This UseAuth session belongs to a different Supabase project' }, 503);
+        if (!await hasSessionAppAccess(result.data.session.access_token)) {
+          await useAuthRequest('sign-out', result.data.session).catch(() => null);
+          return reply({ error: 'Access to Time Logger is not enabled for this account' }, 403);
+        }
         const response = reply({ user: result.data.user, confirmation_required: false }, result.status);
         setAuthCookies(response, result.data.session);
         return response;

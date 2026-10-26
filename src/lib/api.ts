@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { tokenClient } from './supabase';
 import { adminClient, tokenHash } from './admin';
 import { accessCookie, sameOriginMutation } from './useauth';
+import { hasApiTokenAppAccess, hasSessionAppAccess } from './app-access';
 
 function bearer(req: NextRequest) {
   return /^Bearer\s+(.+)$/i.exec(req.headers.get('authorization') ?? '')?.[1] ?? null;
@@ -19,7 +20,8 @@ export async function authenticatedUser(req: NextRequest) {
   if (!token || token.startsWith('tl_')) return null;
   const client = tokenClient(token);
   const { data, error } = await client.auth.getUser(token);
-  return error || !data.user ? null : { client, userId: data.user.id, kind: 'session' as const };
+  if (error || !data.user || !await hasSessionAppAccess(token)) return null;
+  return { client, userId: data.user.id, kind: 'session' as const };
 }
 
 export async function authenticated(req: NextRequest) {
@@ -32,6 +34,7 @@ export async function authenticated(req: NextRequest) {
     .select('id,user_id').eq('token_hash', tokenHash(token))
     .is('revoked_at', null).gt('expires_at', new Date().toISOString()).maybeSingle();
   if (error || !data) return null;
+  if (!await hasApiTokenAppAccess(data.user_id as string, client)) return null;
   // Usage metadata is best effort; authentication does not depend on this write.
   await client.from('timelogger_api_tokens').update({ last_used_at: new Date().toISOString() }).eq('id', data.id);
   return { client, userId: data.user_id as string, kind: 'api_token' as const };
