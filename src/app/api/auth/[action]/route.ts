@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { tokenClient } from '@/lib/supabase';
 import { authCookies, clearAuthCookies, sameOriginMutation, setAuthCookies, useAuthRequest, type AuthSession, type AuthUser } from '@/lib/useauth';
 import { hasSessionAppAccess } from '@/lib/app-access';
-import { parseSession, sessionCookie } from '@/lib/sso';
+import { cookieOptions, parseSession, sessionCookie } from '@/lib/sso';
 
 export const dynamic = 'force-dynamic';
 type Context = { params: Promise<{ action: string }> };
@@ -90,7 +90,7 @@ export async function POST(request: NextRequest, { params }: Context) {
     if (action === 'sign-out') {
       if (request.cookies.get(sessionCookie)) {
         const response = reply({ signed_out: true });
-        response.cookies.delete(sessionCookie);
+        response.cookies.set(sessionCookie, '', cookieOptions(0));
         clearAuthCookies(response);
         return response;
       }
@@ -109,7 +109,7 @@ export async function POST(request: NextRequest, { params }: Context) {
         }
         const response = reply({ user: result.data.user, confirmation_required: false }, result.status);
         setAuthCookies(response, result.data.session);
-        response.cookies.delete(sessionCookie);
+        response.cookies.set(sessionCookie, '', cookieOptions(0));
         return response;
       }
       return reply({ user: null, confirmation_required: result.data.confirmation_required, message: result.data.message }, result.status);
