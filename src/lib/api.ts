@@ -3,6 +3,7 @@ import { tokenClient } from './supabase';
 import { adminClient, tokenHash } from './admin';
 import { accessCookie, sameOriginMutation } from './useauth';
 import { hasApiTokenAppAccess, hasSessionAppAccess } from './app-access';
+import { parseSession, sessionCookie } from './sso';
 
 function bearer(req: NextRequest) {
   return /^Bearer\s+(.+)$/i.exec(req.headers.get('authorization') ?? '')?.[1] ?? null;
@@ -12,6 +13,8 @@ function sessionToken(req: NextRequest) {
   const explicit = bearer(req);
   if (explicit) return explicit;
   if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOriginMutation(req)) return null;
+  const ssoCookie = req.cookies.get(sessionCookie)?.value;
+  if (ssoCookie) return parseSession(ssoCookie)?.accessToken ?? null;
   return req.cookies.get(accessCookie)?.value ?? null;
 }
 

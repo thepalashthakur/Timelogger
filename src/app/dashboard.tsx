@@ -92,10 +92,11 @@ async function accountRequest(action: string, body: Record<string, unknown>) {
   return result as { user?: AccountUser; message?: string };
 }
 
-export default function Dashboard() {
-  const [session, setSession] = useState<{ user: AccountUser } | null>(null);
+export default function Dashboard({ ssoEnabled, accountUrl }: { ssoEnabled: boolean; accountUrl: string }) {
+  const [session, setSession] = useState<{ user: AccountUser; authMethod?: 'sso' | 'password' } | null>(null);
   const [ready, setReady] = useState(false);
   const [authProblem, setAuthProblem] = useState('');
+  const [ssoFailed, setSsoFailed] = useState(false);
   const [mode, setMode] = useState<'login' | 'signup' | 'forgot'>('login');
   const [view, setView] = useState<View>('dashboard');
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
@@ -207,7 +208,7 @@ export default function Dashboard() {
         try {
           const response = await fetch('/api/auth/session', { cache: 'no-store' });
           const body = await response.json();
-          setSession(response.ok && body.user ? { user: body.user } : null);
+          setSession(response.ok && body.user ? { user: body.user, authMethod: body.auth_method } : null);
           setAuthProblem(response.status >= 500 ? body.error ?? 'Authentication is temporarily unavailable' : '');
           return response.ok;
         } catch {
@@ -220,6 +221,7 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
+    setSsoFailed(new URLSearchParams(window.location.search).get('sso') === 'failed');
     void refreshAccount().finally(() => setReady(true));
     const onVisible = () => { if (document.visibilityState === 'visible') void refreshAccount(); };
     document.addEventListener('visibilitychange', onVisible);
@@ -719,10 +721,10 @@ export default function Dashboard() {
         setNotice('If an account exists for this email, a password reset link is on its way.');
       } else if (mode === 'login') {
         const result = await accountRequest('sign-in', { email, password });
-        if (result.user) setSession({ user: result.user });
+        if (result.user) setSession({ user: result.user, authMethod: 'password' });
       } else {
         const result = await accountRequest('sign-up', { email, password });
-        if (result.user) setSession({ user: result.user });
+        if (result.user) setSession({ user: result.user, authMethod: 'password' });
         else { setPendingConfirmationEmail(email.trim()); setPassword(''); }
       }
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Authentication failed'); }
@@ -887,7 +889,9 @@ export default function Dashboard() {
         <Box><Typography variant="h4" sx={{ fontWeight: 700 }}>Timelogger</Typography><Typography color="text.secondary">Your time, clearly accounted for.</Typography></Box>
         <Typography variant="h6">{pendingConfirmationEmail ? 'Check your email' : mode === 'login' ? 'Sign in' : mode === 'signup' ? 'Create an account' : 'Forgot your password?'}</Typography>
         {(error || authProblem) && <Alert severity="error">{error || authProblem}</Alert>}
+        {ssoFailed && <Alert severity="error">Sign-in through UseAuth could not be completed. Please try again.</Alert>}
         {notice && <Alert severity="success">{notice}</Alert>}
+        {ssoEnabled && !pendingConfirmationEmail && <Button variant="contained" href="/auth/sso/start">Continue with UseAuth</Button>}
         {pendingConfirmationEmail ? <Stack spacing={2}>
           <Typography>UseAuth sends the confirmation email for your shared account. Open its confirmation link first. When UseAuth shows your account, return here and sign in with the same email and password.</Typography>
           <Typography variant="body2" color="text.secondary">If this address can be registered, the email will arrive shortly. Check spam if you do not see it.</Typography>
@@ -1033,10 +1037,10 @@ export default function Dashboard() {
           <Divider />
           <Box component="form" onSubmit={(event) => void saveProfile(event)}><Stack spacing={2} sx={{ maxWidth: 480 }}>
             <Typography variant="h6">Personal information</Typography>
-            <TextField label="Display name" value={profileName} onChange={(event) => setProfileName(event.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 100 } }} />
+            <TextField label="Display name" value={profileName} onChange={(event) => setProfileName(event.target.value)} fullWidth slotProps={{ htmlInput: { maxLength: 100, readOnly: session.authMethod === 'sso' } }} />
             <TextField label="Email" value={session.user.email ?? ''} fullWidth slotProps={{ htmlInput: { readOnly: true } }} helperText="Email changes are managed through your account provider." />
             {profileError && <Alert severity="error">{profileError}</Alert>}
-            <Box><Button type="submit" variant="contained" disabled={busy || profileName.trim() === (session.user.display_name ?? '')}>Save profile</Button></Box>
+            {session.authMethod === 'sso' ? <Typography variant="body2" color="text.secondary">Profile changes are available through the existing email and password sign-in while this SSO pilot is in preview.</Typography> : <Box><Button type="submit" variant="contained" disabled={busy || profileName.trim() === (session.user.display_name ?? '')}>Save profile</Button></Box>}
           </Stack></Box>
           <Divider />
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}><Box><Typography variant="body2" color="text.secondary">Member since</Typography><Typography>{new Date(session.user.created_at).toLocaleDateString()}</Typography></Box><Box><Typography variant="body2" color="text.secondary">Email status</Typography><Chip size="small" label={session.user.email_verified ? 'Verified' : 'Unverified'} color={session.user.email_verified ? 'success' : 'warning'} /></Box><Button onClick={() => navigate('settings')}>Account settings</Button></Stack>
@@ -1048,7 +1052,10 @@ export default function Dashboard() {
         <Box><Typography variant="h6" sx={{ fontWeight: 700 }}>Appearance</Typography><Typography color="text.secondary">Follow your device setting or choose a theme for this browser.</Typography></Box>
         <AppearanceControl />
       </Stack></Paper>
-      <Paper variant="outlined" sx={{ borderRadius: 3, p: 3 }}><Box component="form" onSubmit={changeAccountPassword}><Stack spacing={2}>
+      {session.authMethod === 'sso' ? <Paper variant="outlined" sx={{ borderRadius: 3, p: 3 }}><Stack spacing={2} sx={{ alignItems: 'flex-start' }}>
+        <Box><Typography variant="h6" sx={{ fontWeight: 700 }}>Account security</Typography><Typography color="text.secondary">Manage your shared password and recovery settings in UseAuth.</Typography></Box>
+        <Button variant="outlined" href={accountUrl}>Open UseAuth account</Button>
+      </Stack></Paper> : <Paper variant="outlined" sx={{ borderRadius: 3, p: 3 }}><Box component="form" onSubmit={changeAccountPassword}><Stack spacing={2}>
         <Box><Typography variant="h6" sx={{ fontWeight: 700 }}>Change password</Typography><Typography color="text.secondary">Enter your current password and choose a new one.</Typography></Box>
         <TextField label="Current password" type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} required fullWidth autoComplete="current-password" />
         <TextField label="New password" type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} required fullWidth autoComplete="new-password" slotProps={{ htmlInput: { minLength: 8 } }} />
@@ -1056,7 +1063,7 @@ export default function Dashboard() {
         {changeRequiresCode && changeCodeSent && <TextField label="Email verification code" value={changeNonce} onChange={(event) => setChangeNonce(event.target.value)} required fullWidth autoComplete="one-time-code" />}
         {changeError && <Alert severity="error">{changeError}</Alert>}
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}><Button variant="contained" type="submit" disabled={busy || (changeRequiresCode && (!changeCodeSent || !changeNonce.trim()))}>Change password</Button>{changeRequiresCode && <Button type="button" onClick={() => void sendPasswordChangeCode()} disabled={busy}>{changeCodeSent ? 'Resend verification code' : 'Send verification code'}</Button>}</Stack>
-      </Stack></Box></Paper>
+      </Stack></Box></Paper>}
       <Paper variant="outlined" sx={{ borderRadius: 3, p: 3 }}><Stack spacing={2}>
         <Box><Typography variant="h6" sx={{ fontWeight: 700 }}>Direct Google Calendar</Typography><Typography color="text.secondary">Connect your Google account to create, update, and delete Calendar events when completed time entries change. Timers sync after you stop them.</Typography></Box>
         {googleConnection ? <>
