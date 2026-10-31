@@ -99,7 +99,9 @@ export async function POST(request: NextRequest, { params }: Context) {
       const response = reply({ signed_out: true }); clearAuthCookies(response); return response;
     }
     if (action === 'sign-in' || action === 'sign-up' || action === 'forgot-password' || action === 'resend-confirmation') {
-      const result = await useAuthRequest(action, input);
+      const appId = process.env.VERCEL_ENV === 'preview' && process.env.VERCEL_GIT_COMMIT_REF === 'feat/sso-pilot'
+        ? 'timelogger_sso_preview' : 'timelogger';
+      const result = await useAuthRequest(action, action === 'sign-in' ? input : { ...input, app_id: appId });
       if (result.status < 200 || result.status >= 300) return failure(result);
       if (sessionData(result.data.session)) {
         if (!result.data.user || !await localUserMatches(result.data.user, result.data.session.access_token)) return reply({ error: 'This UseAuth session belongs to a different Supabase project' }, 503);
